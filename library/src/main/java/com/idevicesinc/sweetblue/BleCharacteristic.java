@@ -45,9 +45,12 @@ public final class BleCharacteristic
 	{
 		m_native = new BluetoothGattCharacteristic(uuid, properties, permissions);
 
-		for( int i = 0; i < descriptors.length; i++ )
+		if (descriptors != null && descriptors.length > 0)
 		{
-			m_native.addDescriptor(descriptors[i].m_native);
+			for (int i = 0; i < descriptors.length; i++)
+			{
+				m_native.addDescriptor(descriptors[i].m_native);
+			}
 		}
 	}
 }

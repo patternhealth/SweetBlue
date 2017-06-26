@@ -72,7 +72,7 @@ final class P_NativeServerWrapper
 
 	public final boolean openServer()
 	{
-		if( !m_nativeLayer.isServerNull() )
+		if( m_nativeLayer != null && !m_nativeLayer.isServerNull() )
 		{
 			m_mngr.ASSERT(false, "Native server is already not null!");
 

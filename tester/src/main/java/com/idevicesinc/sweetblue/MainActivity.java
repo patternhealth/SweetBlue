@@ -37,6 +37,8 @@ public class MainActivity extends Activity
     private ArrayList<BleDevice> mDevices;
     private DebugLogger mLogger;
 
+    private BleServer mServer;
+
 
     private final static UUID tempUuid = UUID.fromString("47495078-0002-491E-B9A4-F85CD01C3698");
 //    private final static UUID tempUuid = UUID.fromString("1234666b-1000-2000-8000-001199334455");
@@ -106,6 +108,19 @@ public class MainActivity extends Activity
             }
         });
 
+        mStopScan.setOnLongClickListener(new View.OnLongClickListener()
+        {
+            @Override
+            public boolean onLongClick(View v)
+            {
+                if (mServer != null)
+                {
+                    mServer.stopAdvertising();
+                }
+                return true;
+            }
+        });
+
         mLogger = new DebugLogger(250);
 
         BleManagerConfig config = new BleManagerConfig();
@@ -163,6 +178,50 @@ public class MainActivity extends Activity
                 }
             }
         });
+
+        mServer = mgr.getServer();
+        mServer.setListener_Incoming(new BleServer.IncomingListener()
+        {
+            @Override
+            public Please onEvent(IncomingEvent e)
+            {
+                int i = 0;
+                i++;
+                return null;
+            }
+        });
+        mServer.setListener_State(new BleServer.StateListener()
+        {
+            @Override
+            public void onEvent(StateEvent e)
+            {
+                int i = 0;
+                i++;
+            }
+        });
+        BleCharacteristic batChar = new BleCharacteristic(Uuids.BATTERY_SERVICE_UUID, BleCharacteristicPermission.READ, BleCharacteristicProperty.READ, new BleDescriptor[0]);
+        mServer.addService(new BleService(Uuids.BATTERY_SERVICE_UUID, batChar), new BleServer.ServiceAddListener()
+        {
+            @Override
+            public void onEvent(ServiceAddEvent e)
+            {
+                if (e.wasSuccess())
+                {
+                    mgr.getNativeAdapter().setName("AnimalHouse");
+                    mServer.startAdvertising(Uuids.BATTERY_SERVICE_UUID, new BleServer.AdvertisingListener()
+                    {
+                        @Override
+                        public void onEvent(AdvertisingEvent e)
+                        {
+                            int i = 0;
+                            i++;
+                        }
+                    });
+                }
+            }
+        });
+
+
 
 
         mStartScan.setEnabled(false);

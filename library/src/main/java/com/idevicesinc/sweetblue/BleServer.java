@@ -13,6 +13,8 @@ import android.bluetooth.BluetoothGattServerCallback;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.le.AdvertiseCallback;
 import android.content.Context;
+import android.text.TextUtils;
+
 import com.idevicesinc.sweetblue.annotations.Advanced;
 import com.idevicesinc.sweetblue.annotations.Immutable;
 import com.idevicesinc.sweetblue.annotations.Lambda;
@@ -1356,6 +1358,7 @@ public final class BleServer extends BleNode
 	private IncomingListener m_incomingListener;
 	private OutgoingListener m_outgoingListener_default;
 	private final boolean m_isNull;
+	private String m_customName;
 	private BleNodeConfig m_config = null;
 	private final P_ServerConnectionFailManager m_connectionFailMngr;
 	private final P_ClientManager m_clientMngr;
@@ -1821,6 +1824,12 @@ public final class BleServer extends BleNode
 			getManager().getLogger().e(BleManager.class.getSimpleName() + " is not " + ON + "! Please use the turnOn() method first.");
 
 			return new AdvertisingListener.AdvertisingEvent(this, AdvertisingListener.Status.BLE_NOT_ON);
+		}
+
+		if (!TextUtils.isEmpty(advertisePacket.getCustomName()))
+		{
+			m_customName = advertisePacket.getCustomName();
+			getManager().getNativeAdapter().setName(m_customName);
 		}
 
 		final P_Task_Advertise adTask = getManager().getTaskQueue().get(P_Task_Advertise.class, getManager());

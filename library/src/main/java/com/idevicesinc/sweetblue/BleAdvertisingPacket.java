@@ -8,6 +8,7 @@ import android.os.Build;
 import android.os.ParcelUuid;
 
 import com.idevicesinc.sweetblue.utils.BitwiseEnum;
+import com.idevicesinc.sweetblue.utils.BleScanInfo;
 import com.idevicesinc.sweetblue.utils.Interval;
 import com.idevicesinc.sweetblue.BleAdvertisingSettings.BleAdvertisingMode;
 import com.idevicesinc.sweetblue.BleAdvertisingSettings.BleTransmissionPower;
@@ -27,222 +28,246 @@ public final class BleAdvertisingPacket {
     private final int m_options;
     private final int m_manufacturerId;
     private final byte[] m_manData;
+    private final String m_customName;
 
 
     /**
      * Base constructor which all other constructors in this class overload. This sets all the packet information to be included
      * in your advertisement.
      */
-    public BleAdvertisingPacket(UUID[] serviceUuids, Map<UUID, byte[]> serviceData, int options, int manufacturerId, byte[] manufacturerData)
+    public BleAdvertisingPacket(UUID[] serviceUuids, Map<UUID, byte[]> serviceData, int options, int manufacturerId, byte[] manufacturerData, String customName)
     {
         this.serviceUuids = serviceUuids;
         this.serviceData = serviceData;
         m_options = options;
         m_manufacturerId = manufacturerId;
         m_manData = manufacturerData;
+        m_customName = customName;
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
+     * Convenience constructor to build a {@link BleAdvertisingPacket} from an already constructed {@link BleScanInfo} instance.
+     *
+     * For V3 the {@link BleAdvertisingPacket} class will probably go away in favor of the {@link BleScanInfo} class.
+     */
+    public BleAdvertisingPacket(BleScanInfo scanInfo)
+    {
+        serviceUuids = scanInfo.getServiceUUIDS().toArray(new UUID[0]);
+        serviceData = scanInfo.getServiceData();
+        if (scanInfo.getTxPower().value != null && scanInfo.getTxPower().value != 0)
+        {
+            m_options = Option.CONNECTABLE.or(Option.INCLUDE_NAME.or(Option.INCLUDE_TX_POWER));
+        }
+        else
+        {
+            m_options = Option.CONNECTABLE.or(Option.INCLUDE_NAME);
+        }
+        m_manufacturerId = scanInfo.getManufacturerId();
+        m_manData = scanInfo.getManufacturerData();
+        m_customName = scanInfo.getName();
+    }
+
+    /**
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
      * and {@link BleAdvertisingPacket.Option#INCLUDE_NAME} flags.
      */
     public BleAdvertisingPacket(UUID serviceUuid)
     {
-        this(new UUID[] { serviceUuid }, null, Option.CONNECTABLE.or(Option.INCLUDE_NAME), 0, null);
+        this(new UUID[] { serviceUuid }, null, Option.CONNECTABLE.or(Option.INCLUDE_NAME), 0, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}
      */
     public BleAdvertisingPacket(UUID serviceUuid, Option... options)
     {
-        this(new UUID[] { serviceUuid }, null, Option.getFlags(options), 0, null);
+        this(new UUID[] { serviceUuid }, null, Option.getFlags(options), 0, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
      * and {@link BleAdvertisingPacket.Option#INCLUDE_NAME} flags.
      */
     public BleAdvertisingPacket(UUID serviceUuid, int manufacturerId)
     {
-        this(new UUID[] { serviceUuid }, null, Option.CONNECTABLE.or(Option.INCLUDE_NAME), manufacturerId, null);
+        this(new UUID[] { serviceUuid }, null, Option.CONNECTABLE.or(Option.INCLUDE_NAME), manufacturerId, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}
      */
     public BleAdvertisingPacket(UUID serviceUuid, int manufacturerId, Option... options)
     {
-        this(new UUID[] { serviceUuid }, null, Option.getFlags(options), manufacturerId, null);
+        this(new UUID[] { serviceUuid }, null, Option.getFlags(options), manufacturerId, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
      * and {@link BleAdvertisingPacket.Option#INCLUDE_NAME} flags.
      */
     public BleAdvertisingPacket(UUID serviceUuid, int manufacturerId, byte[] manufacturerData)
     {
-        this(new UUID[] { serviceUuid }, null, Option.CONNECTABLE.or(Option.INCLUDE_NAME), manufacturerId, manufacturerData);
+        this(new UUID[] { serviceUuid }, null, Option.CONNECTABLE.or(Option.INCLUDE_NAME), manufacturerId, manufacturerData, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}
      */
     public BleAdvertisingPacket(UUID serviceUuid, int manufacturerId, byte[] manufacturerData, Option... options)
     {
-        this(new UUID[] { serviceUuid }, null, Option.getFlags(options), manufacturerId, manufacturerData);
+        this(new UUID[] { serviceUuid }, null, Option.getFlags(options), manufacturerId, manufacturerData, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
      * and {@link BleAdvertisingPacket.Option#INCLUDE_NAME} flags.
      */
     public BleAdvertisingPacket(UUID[] serviceUuids)
     {
-        this(serviceUuids, null, Option.CONNECTABLE.or(Option.INCLUDE_NAME), 0, null);
+        this(serviceUuids, null, Option.CONNECTABLE.or(Option.INCLUDE_NAME), 0, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}
      */
     public BleAdvertisingPacket(UUID[] serviceUuids, Option... options) {
-        this(serviceUuids, null, Option.getFlags(options), 0, null);
+        this(serviceUuids, null, Option.getFlags(options), 0, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
      * and {@link BleAdvertisingPacket.Option#INCLUDE_NAME} flags.
      */
     public BleAdvertisingPacket(UUID[] serviceUuids, int manufacturerId)
     {
-        this(serviceUuids, null, Option.CONNECTABLE.or(Option.INCLUDE_NAME), manufacturerId, null);
+        this(serviceUuids, null, Option.CONNECTABLE.or(Option.INCLUDE_NAME), manufacturerId, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}
      */
     public BleAdvertisingPacket(UUID[] serviceUuids, int manufacturerId, Option... options)
     {
-        this(serviceUuids, null, Option.getFlags(options), manufacturerId, null);
+        this(serviceUuids, null, Option.getFlags(options), manufacturerId, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
      * and {@link BleAdvertisingPacket.Option#INCLUDE_NAME} flags.
      */
     public BleAdvertisingPacket(UUID[] serviceUuids, int manufacturerId, byte[] manufacturerData)
     {
-        this(serviceUuids, null, Option.CONNECTABLE.or(Option.INCLUDE_NAME), manufacturerId, manufacturerData);
+        this(serviceUuids, null, Option.CONNECTABLE.or(Option.INCLUDE_NAME), manufacturerId, manufacturerData, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}
      */
     public BleAdvertisingPacket(UUID[] serviceUuids, int manufacturerId, byte[] manufacturerData, Option... options)
     {
-        this(serviceUuids, null, Option.getFlags(options), manufacturerId, manufacturerData);
+        this(serviceUuids, null, Option.getFlags(options), manufacturerId, manufacturerData, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
      * and {@link BleAdvertisingPacket.Option#INCLUDE_NAME} flags.
      */
     public BleAdvertisingPacket(UUID serviceUuid, final UUID serviceDataUuid, final byte[] serviceData)
     {
-        this(new UUID[] { serviceUuid }, new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.CONNECTABLE.or(Option.INCLUDE_NAME), 0, null);
+        this(new UUID[] { serviceUuid }, new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.CONNECTABLE.or(Option.INCLUDE_NAME), 0, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}
      */
     public BleAdvertisingPacket(UUID serviceUuid, final UUID serviceDataUuid, final byte[] serviceData, Option... options)
     {
-        this(new UUID[] { serviceUuid }, new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.getFlags(options), 0, null);
+        this(new UUID[] { serviceUuid }, new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.getFlags(options), 0, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
      * and {@link BleAdvertisingPacket.Option#INCLUDE_NAME} flags.
      */
     public BleAdvertisingPacket(UUID[] serviceUuids, final UUID serviceDataUuid, final byte[] serviceData)
     {
-        this(serviceUuids, new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.CONNECTABLE.or(Option.INCLUDE_NAME), 0, null);
+        this(serviceUuids, new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.CONNECTABLE.or(Option.INCLUDE_NAME), 0, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}
      */
     public BleAdvertisingPacket(UUID[] serviceUuids, final UUID serviceDataUuid, final byte[] serviceData, Option... options)
     {
-        this(serviceUuids, new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.getFlags(options), 0, null);
+        this(serviceUuids, new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.getFlags(options), 0, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
      * and {@link BleAdvertisingPacket.Option#INCLUDE_NAME} flags.
      */
     public BleAdvertisingPacket(UUID serviceUuid, Map<UUID, byte[]> serviceUuidsAndData)
     {
-        this(new UUID[] { serviceUuid }, serviceUuidsAndData, Option.CONNECTABLE.or(Option.INCLUDE_NAME), 0, null);
+        this(new UUID[] { serviceUuid }, serviceUuidsAndData, Option.CONNECTABLE.or(Option.INCLUDE_NAME), 0, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}
      */
     public BleAdvertisingPacket(UUID serviceUuid, Map<UUID, byte[]> serviceUuidsAndData, Option... options)
     {
-        this(new UUID[] { serviceUuid }, serviceUuidsAndData, Option.getFlags(options), 0, null);
+        this(new UUID[] { serviceUuid }, serviceUuidsAndData, Option.getFlags(options), 0, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
      * and {@link BleAdvertisingPacket.Option#INCLUDE_NAME} flags.
      */
     public BleAdvertisingPacket(UUID serviceUuid, Map<UUID, byte[]> serviceUuidsAndData, int manufacturerId, byte[] manufacturerData)
     {
-        this(new UUID[] { serviceUuid }, serviceUuidsAndData, Option.CONNECTABLE.or(Option.INCLUDE_NAME), manufacturerId, manufacturerData);
+        this(new UUID[] { serviceUuid }, serviceUuidsAndData, Option.CONNECTABLE.or(Option.INCLUDE_NAME), manufacturerId, manufacturerData, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}
      */
     public BleAdvertisingPacket(UUID serviceUuid, Map<UUID, byte[]> serviceUuidsAndData, int manufacturerId, byte[] manufacturerData, Option... options)
     {
-        this(new UUID[] { serviceUuid }, serviceUuidsAndData, Option.getFlags(options), manufacturerId, manufacturerData);
+        this(new UUID[] { serviceUuid }, serviceUuidsAndData, Option.getFlags(options), manufacturerId, manufacturerData, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
      * and {@link BleAdvertisingPacket.Option#INCLUDE_NAME} flags.
      */
     public BleAdvertisingPacket(final UUID serviceDataUuid, final byte[] serviceData)
     {
-        this(new UUID[0], new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.CONNECTABLE.or(Option.INCLUDE_NAME), 0, null);
+        this(new UUID[0], new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.CONNECTABLE.or(Option.INCLUDE_NAME), 0, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}
      */
     public BleAdvertisingPacket(final UUID serviceDataUuid, final byte[] serviceData, Option... options)
     {
-        this(new UUID[0], new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.getFlags(options), 0, null);
+        this(new UUID[0], new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.getFlags(options), 0, null, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}, which sets the {@link BleAdvertisingPacket.Option#CONNECTABLE},
      * and {@link BleAdvertisingPacket.Option#INCLUDE_NAME} flags.
      */
     public BleAdvertisingPacket(final UUID serviceDataUuid, final byte[] serviceData, int manufacturerId, byte[] manufacturerData)
     {
-        this(new UUID[0], new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.CONNECTABLE.or(Option.INCLUDE_NAME), manufacturerId, manufacturerData);
+        this(new UUID[0], new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.CONNECTABLE.or(Option.INCLUDE_NAME), manufacturerId, manufacturerData, null);
     }
 
     /**
-     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[])}
+     * Overload of {@link #BleAdvertisingPacket(UUID[], Map, int, int, byte[], String)}
      */
     public BleAdvertisingPacket(final UUID serviceDataUuid, final byte[] serviceData, int manufacturerId, byte[] manufacturerData, Option... options)
     {
-        this(new UUID[0], new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.getFlags(options), manufacturerId, manufacturerData);
+        this(new UUID[0], new HashMap<UUID, byte[]>(1) {{ put(serviceDataUuid, serviceData); }}, Option.getFlags(options), manufacturerId, manufacturerData, null);
     }
 
     /**
@@ -360,6 +385,11 @@ public final class BleAdvertisingPacket {
     public Map<UUID, byte[]> getServiceData()
     {
         return serviceData;
+    }
+
+    String getCustomName()
+    {
+        return m_customName;
     }
 
 

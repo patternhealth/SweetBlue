@@ -27,9 +27,12 @@ public final class BleService
 
 		m_native = new BluetoothGattService(uuid, serviceType);
 
-		for( int i = 0; i < characteristics.length; i++ )
+		if (characteristics != null && characteristics.length > 0)
 		{
-			m_native.addCharacteristic(characteristics[i].m_native);
+			for (int i = 0; i < characteristics.length; i++)
+			{
+				m_native.addCharacteristic(characteristics[i].m_native);
+			}
 		}
 	}
 

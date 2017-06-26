@@ -63,6 +63,10 @@ final class P_Task_Advertise extends PA_Task_RequiresBleOn {
         m_timeOut = settings.getTimeout();
     }
 
+    final BleServer.AdvertisingListener getListener()
+    {
+        return m_listener;
+    }
 
     /*package*/ final BleAdvertisingPacket getPacket()
     {

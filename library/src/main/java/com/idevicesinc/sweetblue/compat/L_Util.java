@@ -5,6 +5,8 @@ import android.annotation.TargetApi;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
+import android.bluetooth.le.AdvertiseCallback;
+import android.bluetooth.le.AdvertiseSettings;
 import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.bluetooth.le.ScanSettings;
 import android.os.Build;
@@ -48,6 +50,35 @@ public class L_Util
             return record;
         }
     }
+
+    public interface AdvertisingCallback
+    {
+        void onStartSuccess();
+        void onStartFailure(int errorCode);
+    }
+
+    private static AdvertisingCallback m_userAdCallback;
+
+    private static AdvertiseCallback m_nativeCallback = new AdvertiseCallback()
+    {
+        @Override
+        public void onStartSuccess(AdvertiseSettings settingsInEffect)
+        {
+            if (m_userAdCallback != null)
+            {
+                m_userAdCallback.onStartSuccess();
+            }
+        }
+
+        @Override
+        public void onStartFailure(int errorCode)
+        {
+            if (m_userAdCallback != null)
+            {
+                m_userAdCallback.onStartFailure(errorCode);
+            }
+        }
+    };
 
     private static ScanCallback m_UserCallback;
 

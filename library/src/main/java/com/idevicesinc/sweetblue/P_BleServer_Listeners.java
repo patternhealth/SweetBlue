@@ -8,11 +8,14 @@ import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattServerCallback;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
+import android.bluetooth.le.AdvertiseCallback;
+import android.os.Build;
 
 import com.idevicesinc.sweetblue.BleServer.IncomingListener;
 import static com.idevicesinc.sweetblue.BleServer.IncomingListener.*;
 import static com.idevicesinc.sweetblue.BleServer.OutgoingListener.*;
 
+import com.idevicesinc.sweetblue.compat.L_Util;
 import com.idevicesinc.sweetblue.utils.P_Const;
 import com.idevicesinc.sweetblue.utils.Utils;
 import com.idevicesinc.sweetblue.utils.Uuids;
@@ -91,11 +94,34 @@ class P_BleServer_Listeners extends BluetoothGattServerCallback
 		}
 	};
 
+	final L_Util.AdvertisingCallback m_adCallback;
+
 	public P_BleServer_Listeners( BleServer server )
 	{
 		m_server = server;
 		m_logger = m_server.getManager().getLogger();
 		m_queue = m_server.getManager().getTaskQueue();
+		if (Utils.isLollipop())
+		{
+			m_adCallback = new L_Util.AdvertisingCallback()
+			{
+				@Override
+				public void onStartSuccess()
+				{
+
+				}
+
+				@Override
+				public void onStartFailure(int errorCode)
+				{
+
+				}
+			};
+		}
+		else
+		{
+			m_adCallback = null;
+		}
 	}
 
 	private boolean hasCurrentDisconnectTaskFor(final BluetoothDevice device)
