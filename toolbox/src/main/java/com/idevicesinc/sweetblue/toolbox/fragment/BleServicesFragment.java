@@ -55,7 +55,9 @@ public class BleServicesFragment extends Fragment implements BleServicesActivity
         {
             @Override public void onItemClick(AdapterView<?> parent, View view, int position, long id)
             {
-                if (!m_device.is(BleDeviceState.DISCONNECTED))
+                if (m_device.is(BleDeviceState.INITIALIZED) &&
+                        !m_device.is(BleDeviceState.RECONNECTING_SHORT_TERM) &&
+                        m_device.getNativeGatt() != null)
                 {
                     final BluetoothGattService service = m_serviceList.get(position);
                     Intent intent = new Intent(getActivity(), BleCharacteristicsActivity.class);

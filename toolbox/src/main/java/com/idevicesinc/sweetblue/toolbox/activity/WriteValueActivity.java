@@ -177,6 +177,14 @@ public class WriteValueActivity extends BaseActivity
         mBleManager = BleManager.get(this);
         mDevice = mBleManager.getDevice(mac);
         mService = mDevice.getNativeService(UUID.fromString(serviceUUID));
+
+        if (mService == null)
+        {
+            Toast.makeText(this, R.string.need_connection_write_characteristics_error, Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+
         List<BluetoothGattCharacteristic> charList = mService.getCharacteristics();
         if (characteristicUUID != null)
         {
@@ -188,6 +196,13 @@ public class WriteValueActivity extends BaseActivity
                     break;
                 }
             }
+        }
+
+        if (mCharacteristic == null)
+        {
+            Toast.makeText(this, R.string.need_connection_write_characteristics_error, Toast.LENGTH_LONG).show();
+            finish();
+            return;
         }
 
         actionBar.setTitle(UuidUtil.getCharacteristicName(mCharacteristic));

@@ -14,6 +14,7 @@ import android.util.Log;
 import android.view.View;
 import android.widget.ExpandableListView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.idevicesinc.sweetblue.BleDevice;
 import com.idevicesinc.sweetblue.BleManager;
@@ -40,15 +41,15 @@ public class BleCharacteristicsActivity extends BaseActivity implements BleDevic
     private ExpandableListView m_charListView;
     private SwipeRefreshLayout m_swipeRefreshLayout;
 
-    private TestTransaction mTransaction = null;
+    private ReadTransaction mTransaction = null;
 
-    public class TestTransaction extends BleTransaction
+    public class ReadTransaction extends BleTransaction
     {
         private List<Object> mPendingReadQueue = new ArrayList<>();
         private AtomicBoolean mTransactionLock = new AtomicBoolean(false);
         private BleDevice.ReadWriteListener mListener = null;
 
-        TestTransaction(BleDevice.ReadWriteListener listener, List<BluetoothGattCharacteristic> characteristicList)
+        ReadTransaction(BleDevice.ReadWriteListener listener, List<BluetoothGattCharacteristic> characteristicList)
         {
             mListener = listener;
 
@@ -169,6 +170,15 @@ public class BleCharacteristicsActivity extends BaseActivity implements BleDevic
 
         m_device = BleManager.get(this).getDevice(mac);
         m_service = m_device.getNativeService(UUID.fromString(uuid));
+
+        // If the service is (somehow) null, bail out of the activity
+        if (m_service == null)
+        {
+            Toast.makeText(this, R.string.need_connection_characteristics_error, Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
+
         m_characteristicList = m_service.getCharacteristics();
 
         String title = UuidUtil.getServiceName(m_service);
@@ -203,7 +213,7 @@ public class BleCharacteristicsActivity extends BaseActivity implements BleDevic
             }
         });
 
-        mTransaction = new TestTransaction(this, m_characteristicList);
+        mTransaction = new ReadTransaction(this, m_characteristicList);
         m_device.performTransaction(mTransaction);
     }
 
@@ -221,7 +231,8 @@ public class BleCharacteristicsActivity extends BaseActivity implements BleDevic
     @Override
     public void finish()
     {
-        mTransaction.finishUp();
+        if (mTransaction != null)
+            mTransaction.finishUp();
         super.finish();
     }
 
