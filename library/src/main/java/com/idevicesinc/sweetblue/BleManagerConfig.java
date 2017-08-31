@@ -77,6 +77,11 @@ public class BleManagerConfig extends BleDeviceConfig
 	public static final double DEFAULT_CLASSIC_SCAN_BOOST_TIME			= 0.5;
 
 	/**
+	 * Default value for {@link #classicBoostFallbackAfter}.
+	 */
+	public static final double DEFAULT_CLASSIC_BOOST_FALLBACK			= 7.0;
+
+	/**
 	 * Default value for {@link #scanReportDelay}.
 	 */
 	public static final double DEFAULT_SCAN_REPORT_DELAY				= .5;
@@ -402,6 +407,15 @@ public class BleManagerConfig extends BleDeviceConfig
 	@com.idevicesinc.sweetblue.annotations.Advanced
 	@Nullable(Prevalence.RARE)
 	public Interval scanReportDelay							= Interval.secs(DEFAULT_SCAN_REPORT_DELAY);
+
+
+	/**
+	 * Default is {@link #DEFAULT_CLASSIC_BOOST_FALLBACK} - Defines the amount of time before trying a classic scan. See {@link #scanClassicBoostLength} for
+	 * more information. This time is measured by the time the last device was accepted via a {@link ScanFilter}, if one is set.
+	 */
+	@Advanced
+	@Nullable(Prevalence.NORMAL)
+	public Interval classicBoostFallbackAfter				= Interval.secs(7.0);
 
 	/**
 	 * Default is <code>null</code>, meaning no filtering - all discovered devices will

@@ -3115,6 +3115,8 @@ public final class BleManager
 
 				if (please != null && false == please.ack()) continue;
 
+				m_scanManager.deviceAccepted(m_currentTick);
+
 				final String name_native = rawDeviceName;
 
 				final BleDeviceConfig config_nullable = please != null ? please.getConfig() : null;

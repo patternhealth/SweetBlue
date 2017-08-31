@@ -50,6 +50,8 @@ final class P_ScanManager
     private double m_classicLength;
     private double m_timeClassicBoosting;
 
+    private long m_lastTimeDeviceAccepted;
+
     private int m_mode;
 
     private final Object entryLock = new Object();
@@ -79,6 +81,8 @@ final class P_ScanManager
         m_periodicScan = periodicScan;
         m_timePausedScan = 0.0;
         m_totalTimeScanning = 0.0;
+        // Set the last device accepted time to the start of the scan
+        m_lastTimeDeviceAccepted = m_manager.currentTime();
         BleScanApi scanApi = m_manager.m_config.scanApi == BleScanApi.AUTO ? determineAutoApi() : m_manager.m_config.scanApi;
         switch (scanApi)
         {
@@ -122,6 +126,11 @@ final class P_ScanManager
             return BleScanApi.POST_LOLLIPOP;
         }
         return BleScanApi.PRE_LOLLIPOP;
+    }
+
+    final void deviceAccepted(long curTime)
+    {
+        m_lastTimeDeviceAccepted = curTime;
     }
 
     public final void stopScan()
@@ -250,6 +259,73 @@ final class P_ScanManager
     // Returns if the startScan boolean is true or not.
     final boolean update(double timeStep, long currentTime)
     {
+        // Process natively discovered devices, and determine if the scan should be paused or not
+        doScanningChecks(timeStep);
+
+        // If the scan is paused, start the scan again, if appropriate conditions are met
+        doPausedScanChecks(timeStep);
+
+        if( !m_manager.isAny(SCANNING) )
+        {
+            m_timeNotScanning += timeStep;
+        }
+
+        // Determine if the classic boost should be stopped if it's running
+        boolean stopClassicBoost = shouldStopClassicBoost(timeStep);
+
+        // Determine if a scan should be started up or not
+        boolean startScan = shouldStartScan(currentTime);
+
+        if( startScan )
+        {
+            if( m_manager.doAutoScan() )
+            {
+                m_manager.startScan_private(new ScanOptions().scanPeriodically(m_manager.m_config.autoScanActiveTime, m_manager.m_config.autoScanPauseInterval));
+            }
+        }
+
+        final P_Task_Scan scanTask = m_manager.getTaskQueue().get(P_Task_Scan.class, m_manager);
+
+        if( scanTask != null )
+        {
+            if (stopClassicBoost)
+            {
+                stopClassicBoost(scanTask);
+            }
+
+            //--- DRK > Not sure why this was originally also for the ARMED case...
+//			if( scanTask.getState() == PE_TaskState.ARMED || scanTask.getState() == PE_TaskState.EXECUTING )
+            if( scanTask.getState() == PE_TaskState.EXECUTING )
+            {
+                m_manager.tryPurgingStaleDevices(scanTask.getAggregatedTimeArmedAndExecuting());
+
+                determineIfBoostIsNeeded(currentTime);
+            }
+
+        }
+
+        return startScan;
+    }
+
+    private void determineIfBoostIsNeeded(long curTime)
+    {
+        // Make sure we are scanning, it's not a classic scan, scanboost is NOT enabled, and the fallback IS enabled
+        if (m_manager.is(SCANNING) && m_mode != Mode_CLASSIC &&
+                Interval.isDisabled(m_manager.m_config.scanClassicBoostLength) &&
+                Interval.isEnabled(m_manager.m_config.classicBoostFallbackAfter))
+        {
+            if (curTime - m_lastTimeDeviceAccepted >= m_manager.m_config.classicBoostFallbackAfter.millis())
+            {
+                // Pause the current scan
+                pauseScan();
+                // run a classic scan for 2 seconds. The update method will then stop the boost, and determine if it should restart the scan
+                classicBoost(2.0);
+            }
+        }
+    }
+
+    private void doScanningChecks(double timeStep)
+    {
         if (m_manager.is(SCANNING))
         {
             m_totalTimeScanning += timeStep;
@@ -264,7 +340,10 @@ final class P_ScanManager
                 pauseScan();
             }
         }
+    }
 
+    private void doPausedScanChecks(double timeStep)
+    {
         if (m_manager.is(SCANNING_PAUSED))
         {
             m_timePausedScan += timeStep;
@@ -278,25 +357,23 @@ final class P_ScanManager
                 }
             }
         }
+    }
 
-        if( !m_manager.isAny(SCANNING) )
-        {
-            m_timeNotScanning += timeStep;
-        }
-
-        boolean stopClassicBoost = false;
-
+    private boolean shouldStopClassicBoost(double timeStep)
+    {
         if (m_manager.is(BOOST_SCANNING))
         {
             m_timeClassicBoosting += timeStep;
             if (m_timeClassicBoosting >= m_classicLength)
             {
-                stopClassicBoost = true;
+                return true;
             }
         }
+        return false;
+    }
 
-        boolean startScan = false;
-
+    private boolean shouldStartScan(long currentTime)
+    {
         if( Interval.isEnabled(m_manager.m_config.autoScanActiveTime) && m_manager.ready() && !m_manager.is(BOOST_SCANNING))
         {
             if( m_manager.isForegrounded() )
@@ -307,7 +384,7 @@ final class P_ScanManager
 
                     if (!m_manager.isScanning())
                     {
-                        startScan = true;
+                        return true;
                     }
                 }
                 else if ( Interval.isEnabled(m_manager.m_config.autoScanDelayAfterResume) && !m_triedToStartScanAfterResume && m_manager.timeForegrounded() >= Interval.secs(m_manager.m_config.autoScanDelayAfterResume) )
@@ -316,7 +393,7 @@ final class P_ScanManager
 
                     if (!m_manager.isScanning())
                     {
-                        startScan = true;
+                        return true;
                     }
                 }
             }
@@ -326,40 +403,18 @@ final class P_ScanManager
 
                 if( Interval.isEnabled(scanInterval) && m_timeNotScanning >= scanInterval )
                 {
-                    startScan = true;
+                    return true;
                 }
             }
         }
+        return false;
+    }
 
-        if( startScan )
-        {
-            if( m_manager.doAutoScan() )
-            {
-                m_manager.startScan_private(new ScanOptions().scanPeriodically(m_manager.m_config.autoScanActiveTime, m_manager.m_config.autoScanPauseInterval));
-            }
-        }
-
-        final P_Task_Scan scanTask = m_manager.getTaskQueue().get(P_Task_Scan.class, m_manager);
-
-        if( scanTask != null )
-        {
-
-            if (stopClassicBoost)
-            {
-                m_timeClassicBoosting = 0;
-                stopClassicDiscovery();
-                scanTask.onClassicBoostFinished();
-            }
-
-            //--- DRK > Not sure why this was originally also for the ARMED case...
-//			if( scanTask.getState() == PE_TaskState.ARMED || scanTask.getState() == PE_TaskState.EXECUTING )
-            if( scanTask.getState() == PE_TaskState.EXECUTING )
-            {
-                m_manager.tryPurgingStaleDevices(scanTask.getAggregatedTimeArmedAndExecuting());
-            }
-        }
-
-        return startScan;
+    private void stopClassicBoost(P_Task_Scan scanTask)
+    {
+        m_timeClassicBoosting = 0;
+        stopClassicDiscovery();
+        scanTask.onClassicBoostFinished();
     }
 
     final boolean isPeriodicScan()
@@ -496,6 +551,7 @@ final class P_ScanManager
         }
         if (stopping)
         {
+            m_lastTimeDeviceAccepted = 0;
             m_manager.getStateTracker().update(PA_StateTracker.E_Intent.INTENTIONAL, BleStatuses.GATT_STATUS_NOT_APPLICABLE, SCANNING, false, BOOST_SCANNING, false, SCANNING_PAUSED, false);
         }
         else
