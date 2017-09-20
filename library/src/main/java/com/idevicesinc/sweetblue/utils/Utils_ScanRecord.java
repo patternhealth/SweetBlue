@@ -104,7 +104,7 @@ public final class Utils_ScanRecord extends Utils
 		boolean completeList = false;
 
 		int mfgId = -1;
-		byte[] mfgData = new byte[34];
+		byte[] mfgData = new byte[0];
 
 		if(scanRecord == null)
 		{
@@ -119,6 +119,12 @@ public final class Utils_ScanRecord extends Utils
 			if (length == 0) {
 				break;
 			}
+
+			// New problem in Android 8.0. It seems some records come in with a length greater than 0, but then there's nothing afterwards, causing
+			// a crash. This check avoids the crash
+			if (currentPos >= scanRecord.length)
+				break;
+
 			// Note the length includes the length of the field type itself.
 			int dataLength = length - 1;
 			// fieldType is unsigned int.
@@ -242,6 +248,11 @@ public final class Utils_ScanRecord extends Utils
 				{
 					break;
 				}
+				// New problem in Android 8.0. It seems some records come in with a length greater than 0, but then there's nothing afterwards, causing
+				// a crash. This check avoids the crash
+				if (currentPos >= scanRecord.length)
+					break;
+
 				// Note the length includes the length of the field type itself.
 				int dataLength = length - 1;
 				// fieldType is unsigned int.
@@ -339,7 +350,7 @@ public final class Utils_ScanRecord extends Utils
 					case DATA_TYPE_LOCAL_NAME_COMPLETE:
 						String n = new String(extractBytes(scanRecord, currentPos, dataLength));
 						if (!TextUtils.isEmpty(n)) {
-							name = n;
+							return n;
 						}
 						break;
 					default:

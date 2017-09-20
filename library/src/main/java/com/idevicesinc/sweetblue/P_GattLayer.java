@@ -16,12 +16,19 @@ interface P_GattLayer
 {
 
     void setGatt(BluetoothGatt gatt);
-    BleManager.UhOhListener.UhOh closeGatt();
+    UhOhListener.UhOh closeGatt();
     BluetoothGatt getGatt();
     Boolean getAuthRetryValue();
     boolean equals(BluetoothGatt gatt);
     List<BluetoothGattService> getNativeServiceList(P_Logger logger);
+
+    /**
+     * @deprecated
+     */
+    @Deprecated
     BluetoothGattService getService(UUID serviceUuid, P_Logger logger);
+
+    BleServiceWrapper getBleService(UUID serviceUuid, P_Logger logger);
     boolean isGattNull();
     BluetoothGatt connect(P_NativeDeviceLayer device, Context context, boolean useAutoConnect, BluetoothGattCallback callback);
     void disconnect();

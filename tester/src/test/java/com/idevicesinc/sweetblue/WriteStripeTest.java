@@ -6,15 +6,15 @@ import android.bluetooth.BluetoothGattDescriptor;
 
 import com.idevicesinc.sweetblue.utils.ByteBuffer;
 import com.idevicesinc.sweetblue.utils.GattDatabase;
-import com.idevicesinc.sweetblue.utils.Util;
+import com.idevicesinc.sweetblue.utils.Util_Unit;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
+
 import java.util.Random;
 import java.util.UUID;
-import java.util.concurrent.Semaphore;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertTrue;
@@ -42,44 +42,37 @@ public class WriteStripeTest extends BaseBleUnitTest
     @Test
     public void stripedWriteTest() throws Exception
     {
-        m_config.loggingEnabled = true;
+        m_config.loggingOptions = LogOptions.ON;
 
         m_buffer = new ByteBuffer();
 
         m_mgr.setConfig(m_config);
 
-        m_mgr.setListener_Discovery(new BleManager.DiscoveryListener()
+        m_mgr.setListener_Discovery(e ->
         {
-            @Override public void onEvent(DiscoveryEvent e)
+
+            if (e.was(DiscoveryListener.LifeCycle.DISCOVERED))
             {
-                if (e.was(LifeCycle.DISCOVERED))
+                m_device = e.device();
+                m_device.connect(e1 ->
                 {
-                    m_device = e.device();
-                    m_device.connect(new BleDevice.StateListener()
+
+                    assertTrue(e1.wasSuccess());
+                    final byte[] data = new byte[100];
+                    new Random().nextBytes(data);
+                    final BleWrite bleWrite = new BleWrite(tempUuid).setBytes(data);
+                    m_device.write(bleWrite, e11 ->
                     {
-                        @Override public void onEvent(StateEvent e)
-                        {
-                            if (e.didEnter(BleDeviceState.INITIALIZED))
-                            {
-                                final byte[] data = new byte[100];
-                                new Random().nextBytes(data);
-                                m_device.write(tempUuid, data, new BleDevice.ReadWriteListener()
-                                {
-                                    @Override public void onEvent(ReadWriteEvent e)
-                                    {
-                                        assertTrue(e.wasSuccess());
-                                        assertArrayEquals(data, m_buffer.bytesAndClear());
-                                        succeed();
-                                    }
-                                });
-                            }
-                        }
+
+                        assertTrue(e11.wasSuccess());
+                        assertArrayEquals(data, m_buffer.bytesAndClear());
+                        succeed();
                     });
-                }
+                });
             }
         });
 
-        m_mgr.newDevice(Util.randomMacAddress(), "Test Device");
+        m_mgr.newDevice(Util_Unit.randomMacAddress(), "Test Device");
 
         startTest();
     }
@@ -87,49 +80,40 @@ public class WriteStripeTest extends BaseBleUnitTest
     @Test
     public void stripedWriteDescriptorTest() throws Exception
     {
-        m_config.loggingEnabled = true;
+        m_config.loggingOptions = LogOptions.ON;
 
         m_buffer = new ByteBuffer();
 
         m_mgr.setConfig(m_config);
 
-        m_mgr.setListener_Discovery(new BleManager.DiscoveryListener()
+        m_mgr.setListener_Discovery(e ->
         {
-            @Override public void onEvent(DiscoveryEvent e)
+            if (e.was(DiscoveryListener.LifeCycle.DISCOVERED))
             {
-                if (e.was(LifeCycle.DISCOVERED))
+                m_device = e.device();
+                m_device.connect(e1 ->
                 {
-                    m_device = e.device();
-                    m_device.connect(new BleDevice.StateListener()
+                    assertTrue(e1.wasSuccess());
+                    final byte[] data = new byte[100];
+                    new Random().nextBytes(data);
+                    final BleWrite bleWrite = new BleWrite(tempUuid).setDescriptorUUID(tempDescUuid).setBytes(data);
+                    m_device.writeDescriptor(bleWrite, e11 ->
                     {
-                        @Override public void onEvent(StateEvent e)
-                        {
-                            if (e.didEnter(BleDeviceState.INITIALIZED))
-                            {
-                                final byte[] data = new byte[100];
-                                new Random().nextBytes(data);
-                                m_device.writeDescriptor(tempUuid, tempDescUuid, data, new BleDevice.ReadWriteListener()
-                                {
-                                    @Override public void onEvent(ReadWriteEvent e)
-                                    {
-                                        assertTrue(e.wasSuccess());
-                                        assertArrayEquals(data, m_buffer.bytesAndClear());
-                                        succeed();
-                                    }
-                                });
-                            }
-                        }
+                        assertTrue(e11.wasSuccess());
+                        assertArrayEquals(data, m_buffer.bytesAndClear());
+                        succeed();
                     });
-                }
+                });
             }
         });
 
-        m_mgr.newDevice(Util.randomMacAddress(), "Test Device");
+        m_mgr.newDevice(Util_Unit.randomMacAddress(), "Test Device");
 
         startTest();
     }
 
-    @Override public P_GattLayer getGattLayer(BleDevice device)
+    @Override
+    public P_GattLayer getGattLayer(BleDevice device)
     {
         return new StripeGatt(device);
     }

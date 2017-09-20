@@ -1,8 +1,7 @@
 package com.idevicesinc.sweetblue;
 
-import com.idevicesinc.sweetblue.BleNode.ConnectionFailListener.AutoConnectUsage;
+import com.idevicesinc.sweetblue.ReconnectFilter.AutoConnectUsage;
 
-import android.bluetooth.BluetoothGatt;
 
 final class P_Task_Connect extends PA_Task_RequiresBleOn
 {
@@ -44,7 +43,7 @@ final class P_Task_Connect extends PA_Task_RequiresBleOn
 		{
 			getLogger().w("Native stack is reporting already connected!");
 
-			BleManager.UhOhListener.UhOh uhoh = BleManager.UhOhListener.UhOh.INCONSISTENT_NATIVE_DEVICE_STATE;
+			UhOhListener.UhOh uhoh = UhOhListener.UhOh.INCONSISTENT_NATIVE_DEVICE_STATE;
 			getManager().uhOh(uhoh);
 		}
 		

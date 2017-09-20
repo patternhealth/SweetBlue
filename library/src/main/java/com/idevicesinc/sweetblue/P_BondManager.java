@@ -1,14 +1,11 @@
 package com.idevicesinc.sweetblue;
 
+import android.bluetooth.BluetoothDevice;
 import static com.idevicesinc.sweetblue.BleDeviceState.BONDED;
 import static com.idevicesinc.sweetblue.BleDeviceState.BONDING;
 import static com.idevicesinc.sweetblue.BleDeviceState.UNBONDED;
-import com.idevicesinc.sweetblue.BleDevice.BondListener.BondEvent;
-import com.idevicesinc.sweetblue.BleDevice.BondListener;
-import com.idevicesinc.sweetblue.BleDevice.ConnectionFailListener;
-import com.idevicesinc.sweetblue.BleDevice.BondListener.Status;
-import com.idevicesinc.sweetblue.BleDeviceConfig.BondFilter;
-import com.idevicesinc.sweetblue.BleManager.UhOhListener.UhOh;
+import com.idevicesinc.sweetblue.BondListener.Status;
+import com.idevicesinc.sweetblue.UhOhListener.UhOh;
 import com.idevicesinc.sweetblue.PA_StateTracker.E_Intent;
 import com.idevicesinc.sweetblue.utils.State;
 import com.idevicesinc.sweetblue.utils.Utils;
@@ -25,7 +22,9 @@ final class P_BondManager
 
 	private int m_bondRetries = 0;
 	
-	private BleDevice.BondListener m_listener;
+	private BondListener m_listener;
+
+	private boolean m_bondRequested;
 
 	
 	P_BondManager(BleDevice device)
@@ -34,7 +33,8 @@ final class P_BondManager
 	}
 
 	
-	public final void setListener(BleDevice.BondListener listener_nullable)
+
+	public final void setListener(BondListener listener_nullable)
 	{
 		m_listener = listener_nullable;
 	}
@@ -42,6 +42,7 @@ final class P_BondManager
 	public final void resetBondRetryCount()
 	{
 		m_bondRetries = 0;
+		m_bondRequested = false;
 	}
 
 	final void onBondTaskStateChange(final PA_Task task, final PE_TaskState state)
@@ -137,12 +138,12 @@ final class P_BondManager
 		
 		return false;
 	}
-
-	final Object[] getOverrideBondStatesForDisconnect(ConnectionFailListener.Status connectionFailReasonIfConnecting)
+	
+	Object[] getOverrideBondStatesForDisconnect(DeviceReconnectFilter.Status connectionFailReasonIfConnecting)
 	{
 		final Object[] overrideBondingStates;
 		
-		if( connectionFailReasonIfConnecting == ConnectionFailListener.Status.BONDING_FAILED )
+		if( connectionFailReasonIfConnecting == DeviceReconnectFilter.Status.BONDING_FAILED )
 		{
 			overrideBondingStates = OVERRIDE_UNBONDED_STATES;
 		}
@@ -152,6 +153,11 @@ final class P_BondManager
 		}
 		
 		return overrideBondingStates;
+	}
+
+	final void onNativeBondRequest()
+	{
+		m_bondRequested = true;
 	}
 
 	final void onNativeBondFailed(final E_Intent intent, final BondListener.Status status, final int failReason, final boolean wasDirect)
@@ -166,18 +172,18 @@ final class P_BondManager
 		// Determine if we need to retry the bond.
 		if (getFilter() != null)
 		{
-			final BondRetryFilter.RetryEvent event = new BondRetryFilter.RetryEvent(m_device, failReason, m_bondRetries, wasDirect);
+			final BondRetryFilter.RetryEvent event = new BondRetryFilter.RetryEvent(m_device, failReason, m_bondRetries, wasDirect, m_bondRequested);
 			final BondRetryFilter.Please please = m_device.getManager().m_config.bondRetryFilter.onEvent(event);
 			if (please.shouldRetry())
 			{
 				m_device.getManager().getLogger().w("Bond failed with failReason of " + m_device.getManager().getLogger().gattUnbondReason(failReason) + ". Retrying bond...");
 				m_bondRetries++;
 				m_device.stateTracker_updateBoth(intent, BleStatuses.GATT_STATUS_NOT_APPLICABLE, BONDING, false, UNBONDED, true);
-				m_device.bond_private(wasDirect, m_listener);
+				m_device.bond_private(wasDirect, false, m_listener);
 				return;
 			}
 		}
-		m_bondRetries = 0;
+		resetBondRetryCount();
 
 		
 		if( m_device.is_internal(BleDeviceState.CONNECTED) || m_device.is_internal(BleDeviceState.CONNECTING) )
@@ -189,7 +195,7 @@ final class P_BondManager
 		{
 			final boolean doingReconnect_shortTerm = m_device.is(BleDeviceState.RECONNECTING_SHORT_TERM);
 			
-			m_device.disconnectWithReason(BleDevice.ConnectionFailListener.Status.BONDING_FAILED, status.timing(), BleStatuses.GATT_STATUS_NOT_APPLICABLE, failReason, m_device.NULL_READWRITE_EVENT());
+			m_device.disconnectWithReason(DeviceReconnectFilter.Status.BONDING_FAILED, status.timing(), BleStatuses.GATT_STATUS_NOT_APPLICABLE, failReason, m_device.NULL_READWRITE_EVENT());
 		}
 		else
 		{
@@ -235,11 +241,11 @@ final class P_BondManager
 
 	final boolean bondIfNeeded(final UUID charUuid, final BondFilter.CharacteristicEventType type)
 	{
-		final BleDeviceConfig.BondFilter bondFilter = m_device.conf_device().bondFilter != null ? m_device.conf_device().bondFilter : m_device.conf_mngr().bondFilter;
+		final BondFilter bondFilter = m_device.conf_device().bondFilter != null ? m_device.conf_device().bondFilter : m_device.conf_mngr().bondFilter;
 		
 		if( bondFilter == null )  return false;
 		
-		final BondFilter.CharacteristicEvent event = new BleDeviceConfig.BondFilter.CharacteristicEvent(m_device, charUuid, type);
+		final BondFilter.CharacteristicEvent event = new BondFilter.CharacteristicEvent(m_device, charUuid, type);
 		
 		final BondFilter.Please please = bondFilter.onEvent(event);
 		
@@ -267,7 +273,7 @@ final class P_BondManager
 		
 		if( bond )
 		{
-			m_device.bond_private(/*isDirect=*/false, please_nullable.listener());
+			m_device.bond_private(/*isDirect=*/false, false, please_nullable.listener());
 		}
 		else
 		{
@@ -280,16 +286,16 @@ final class P_BondManager
 		return bond;
 	}
 
-	final BondEvent invokeCallback(Status status, int failReason, State.ChangeIntent intent)
+	final BondListener.BondEvent invokeCallback(Status status, int failReason, State.ChangeIntent intent)
 	{
-		final BondEvent event = new BondEvent(m_device, status, failReason, intent);
+		final BondListener.BondEvent event = new BondListener.BondEvent(m_device, status, failReason, intent);
 		
 		invokeCallback(event);
 		
 		return event;
 	}
 
-	final void invokeCallback(final BondEvent event)
+	final void invokeCallback(final BondListener.BondEvent event)
 	{		
 		if( m_listener != null )
 		{
@@ -304,10 +310,12 @@ final class P_BondManager
 
 	final Object[] getNativeBondingStateOverrides()
 	{
-		return new Object[]{BONDING, m_device.m_nativeWrapper.isNativelyBonding(), BONDED, m_device.m_nativeWrapper.isNativelyBonded(), UNBONDED, m_device.m_nativeWrapper.isNativelyUnbonded()};
+		// Cut the 3 calls to jni layer down to one for efficiency (getting the native bond state calls a jni function)
+		int bondState = m_device.m_nativeWrapper.getNativeBondState();
+		return new Object[]{BONDING, m_device.m_nativeWrapper.isNativelyBonding(bondState), BONDED, m_device.m_nativeWrapper.isNativelyBonded(bondState), UNBONDED, m_device.m_nativeWrapper.isNativelyUnbonded(bondState)};
 	}
 	
-	private boolean isNativelyBondingOrBonded()
+	boolean isNativelyBondingOrBonded()
 	{
 		//--- DRK > These asserts are here because, as far as I could discern from logs, the abstracted
 		//---		state for bonding/bonded was true, but when we did an encrypted write, it kicked
@@ -323,7 +331,8 @@ final class P_BondManager
 		//---		UPDATE AGAIN AGAIN: Nevermind, it seems getBondState *can* actually lie, so original comment sorta stands...wow.
 //		m_mngr.ASSERT(m_stateTracker.checkBitMatch(BONDED, isNativelyBonded()));
 //		m_mngr.ASSERT(m_stateTracker.checkBitMatch(BONDING, isNativelyBonding()));
+		int bondState = m_device.m_nativeWrapper.getNativeBondState();
 		
-		return m_device.m_nativeWrapper.isNativelyBonded() || m_device.m_nativeWrapper.isNativelyBonding();
+		return bondState == BluetoothDevice.BOND_BONDED || bondState == BluetoothDevice.BOND_BONDING;
 	}
 }

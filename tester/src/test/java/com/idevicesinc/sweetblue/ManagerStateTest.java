@@ -14,10 +14,12 @@ import static org.junit.Assert.assertTrue;
 public final class ManagerStateTest extends BaseBleUnitTest
 {
 
-    @Test
+    @Test(timeout = 20000)
     public void onToOffTest() throws Exception
     {
-        m_config.loggingEnabled = true;
+        m_config.loggingOptions = LogOptions.ON;
+
+        m_config.nativeManagerLayer = new UnitTestManagerLayer();
 
         m_mgr.setConfig(m_config);
 
@@ -25,11 +27,16 @@ public final class ManagerStateTest extends BaseBleUnitTest
 
         m_mgr.setListener_State(new ManagerStateListener()
         {
-            @Override public void onEvent(BleManager.StateListener.StateEvent e)
+            @Override public void onEvent(ManagerStateListener.StateEvent e)
             {
                 if (e.didEnter(BleManagerState.TURNING_OFF))
                 {
                     System.out.println("Bluetooth is turning off...");
+
+                    if (e.didEnter(BleManagerState.OFF))
+                    {
+                        succeed();
+                    }
                 }
                 else if (e.didEnter(BleManagerState.OFF))
                 {
@@ -43,10 +50,12 @@ public final class ManagerStateTest extends BaseBleUnitTest
         startTest();
     }
 
-    @Test
+    @Test(timeout = 20000)
     public void onToOffToOnTest() throws Exception
     {
-        m_config.loggingEnabled = true;
+        m_config.loggingOptions = LogOptions.ON;
+
+        m_config.nativeManagerLayer = new UnitTestManagerLayer();
 
         m_mgr.setConfig(m_config);
 
@@ -54,11 +63,16 @@ public final class ManagerStateTest extends BaseBleUnitTest
 
         m_mgr.setListener_State(new ManagerStateListener()
         {
-            @Override public void onEvent(BleManager.StateListener.StateEvent e)
+            @Override public void onEvent(ManagerStateListener.StateEvent e)
             {
                 if (e.didEnter(BleManagerState.TURNING_OFF))
                 {
                     System.out.println("Bluetooth is turning off...");
+
+                    if (e.didEnter(BleManagerState.OFF))
+                    {
+                        m_mgr.turnOn();
+                    }
                 }
                 else if (e.didEnter(BleManagerState.OFF))
                 {
@@ -83,7 +97,8 @@ public final class ManagerStateTest extends BaseBleUnitTest
 //    @Test
     public void turningOffToTurningOnTest() throws Exception
     {
-        m_config.loggingEnabled = true;
+        m_config.loggingOptions = LogOptions.ON;
+
         final DontTurnOffManagerLayer layer = new DontTurnOffManagerLayer();
         m_config.nativeManagerLayer = layer;
 
@@ -93,7 +108,7 @@ public final class ManagerStateTest extends BaseBleUnitTest
 
         m_mgr.setListener_State(new ManagerStateListener()
         {
-            @Override public void onEvent(BleManager.StateListener.StateEvent e)
+            @Override public void onEvent(ManagerStateListener.StateEvent e)
             {
                 if (e.didEnter(BleManagerState.TURNING_OFF))
                 {

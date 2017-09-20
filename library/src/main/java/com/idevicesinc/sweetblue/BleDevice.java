@@ -2,27 +2,21 @@ package com.idevicesinc.sweetblue;
 
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
-import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
-import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
-import android.content.BroadcastReceiver;
-
-import com.idevicesinc.sweetblue.BleDevice.BondListener.BondEvent;
-import com.idevicesinc.sweetblue.BleDevice.ConnectionFailListener.ConnectionFailEvent;
-import com.idevicesinc.sweetblue.BleDevice.ConnectionFailListener.Status;
-import com.idevicesinc.sweetblue.BleDevice.ConnectionFailListener.Timing;
-import com.idevicesinc.sweetblue.BleDevice.ReadWriteListener.ReadWriteEvent;
-import com.idevicesinc.sweetblue.BleDevice.ReadWriteListener.Type;
-import com.idevicesinc.sweetblue.BleDeviceConfig.BondFilter;
-import com.idevicesinc.sweetblue.BleDeviceConfig.BondFilter.CharacteristicEventType;
-import com.idevicesinc.sweetblue.BleNode.ConnectionFailListener.AutoConnectUsage;
+import com.idevicesinc.sweetblue.ReadWriteListener.Type;
+import com.idevicesinc.sweetblue.ReadWriteListener.ReadWriteEvent;
+import com.idevicesinc.sweetblue.DeviceReconnectFilter.Status;
+import com.idevicesinc.sweetblue.DeviceReconnectFilter.Timing;
+import com.idevicesinc.sweetblue.DeviceReconnectFilter.ConnectFailEvent;
+import com.idevicesinc.sweetblue.BondFilter.CharacteristicEventType;
 import com.idevicesinc.sweetblue.PA_StateTracker.E_Intent;
 import com.idevicesinc.sweetblue.P_Task_Bond.E_TransactionLockBehavior;
 import com.idevicesinc.sweetblue.annotations.Advanced;
 import com.idevicesinc.sweetblue.annotations.Immutable;
 import com.idevicesinc.sweetblue.annotations.Nullable;
 import com.idevicesinc.sweetblue.annotations.Nullable.Prevalence;
+import com.idevicesinc.sweetblue.impl.DefaultDeviceReconnectFilter;
 import com.idevicesinc.sweetblue.utils.BleScanInfo;
 import com.idevicesinc.sweetblue.utils.Distance;
 import com.idevicesinc.sweetblue.utils.EmptyIterator;
@@ -41,28 +35,23 @@ import com.idevicesinc.sweetblue.utils.P_Const;
 import com.idevicesinc.sweetblue.utils.Percent;
 import com.idevicesinc.sweetblue.utils.PresentData;
 import com.idevicesinc.sweetblue.utils.State;
-import com.idevicesinc.sweetblue.utils.State.ChangeIntent;
 import com.idevicesinc.sweetblue.utils.TimeEstimator;
-import com.idevicesinc.sweetblue.utils.UsesCustomNull;
 import com.idevicesinc.sweetblue.utils.Utils;
-import com.idevicesinc.sweetblue.utils.Utils_Byte;
 import com.idevicesinc.sweetblue.utils.Utils_Rssi;
 import com.idevicesinc.sweetblue.utils.Utils_ScanRecord;
 import com.idevicesinc.sweetblue.utils.Utils_State;
-import com.idevicesinc.sweetblue.utils.Utils_String;
 import com.idevicesinc.sweetblue.utils.Uuids;
 
-import java.io.UnsupportedEncodingException;
-import java.util.ArrayList;
+import java.lang.ref.WeakReference;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Stack;
 import java.util.UUID;
-
 import static com.idevicesinc.sweetblue.BleDeviceState.ADVERTISING;
-import static com.idevicesinc.sweetblue.BleDeviceState.AUTHENTICATED;
+import static com.idevicesinc.sweetblue.BleDeviceStaBlete.AUTHENTICATED;
 import static com.idevicesinc.sweetblue.BleDeviceState.AUTHENTICATING;
 import static com.idevicesinc.sweetblue.BleDeviceState.BONDED;
 import static com.idevicesinc.sweetblue.BleDeviceState.BONDING;
@@ -82,6 +71,7 @@ import static com.idevicesinc.sweetblue.BleDeviceState.SERVICES_DISCOVERED;
 import static com.idevicesinc.sweetblue.BleDeviceState.UNBONDED;
 import static com.idevicesinc.sweetblue.BleDeviceState.UNDISCOVERED;
 
+
 /**
  * This is the one other class you will use the most besides {@link BleManager}.
  * It acts as a BLE-specific abstraction for the {@link BluetoothDevice} and
@@ -93,7 +83,7 @@ import static com.idevicesinc.sweetblue.BleDeviceState.UNDISCOVERED;
  * {@link BleManager#newDevice(String, String)}, usually they're created
  * implicitly by {@link BleManager} as a result of a scanning operation (e.g.
  * {@link BleManager#startScan()}) and sent to you through
- * {@link BleManager.DiscoveryListener#onEvent(BleManager.DiscoveryListener.DiscoveryEvent)}.
+ * {@link DiscoveryListener#onEvent(Event)}.
  */
 public final class BleDevice extends BleNode
 {
@@ -103,1749 +93,7 @@ public final class BleDevice extends BleNode
     @Immutable
     public static final BleDevice NULL = new BleDevice(null, P_NativeDeviceLayer.NULL, NULL_STRING(), NULL_STRING(), BleDeviceOrigin.EXPLICIT, null, /*isNull=*/true);
 
-
-    /**
-     * Provide an implementation of this callback to various methods like {@link BleDevice#read(UUID, ReadWriteListener)},
-     * {@link BleDevice#write(UUID, byte[], ReadWriteListener)}, {@link BleDevice#startPoll(UUID, Interval, ReadWriteListener)},
-     * {@link BleDevice#enableNotify(UUID, ReadWriteListener)}, {@link BleDevice#readRssi(ReadWriteListener)}, etc.
-     *
-     * @deprecated - Refactored to {@link com.idevicesinc.sweetblue.ReadWriteListener}. This class will stay until version 3.0, when it will
-     * be removed.
-     */
-    @com.idevicesinc.sweetblue.annotations.Lambda
-    public static interface ReadWriteListener extends com.idevicesinc.sweetblue.utils.GenericListener_Void<ReadWriteListener.ReadWriteEvent>
-    {
-        /**
-         * A value returned to {@link ReadWriteListener#onEvent(Event)}
-         * by way of {@link ReadWriteEvent#status} that indicates success of the
-         * operation or the reason for its failure. This enum is <i>not</i>
-         * meant to match up with {@link BluetoothGatt}.GATT_* values in any way.
-         *
-         * @see ReadWriteEvent#status()
-         */
-        public static enum Status implements UsesCustomNull
-        {
-            /**
-             * As of now, only used for {@link ConnectionFailListener.ConnectionFailEvent#txnFailReason()} in some cases.
-             */
-            NULL,
-
-            /**
-             * If {@link ReadWriteEvent#type} {@link Type#isRead()} then {@link ReadWriteEvent#data} will contain some data returned from
-             * the device. If type is {@link Type#WRITE} then {@link ReadWriteEvent#data} was sent to the device.
-             */
-            SUCCESS,
-
-            /**
-             * {@link BleDevice#read(UUID, ReadWriteListener)}, {@link BleDevice#write(UUID, byte[])},
-             * {@link BleDevice#enableNotify(UUID, ReadWriteListener)}, etc. was called on {@link BleDevice#NULL}.
-             */
-            NULL_DEVICE,
-
-            /**
-             * Device is not {@link BleDeviceState#CONNECTED}.
-             */
-            NOT_CONNECTED,
-
-            /**
-             * Couldn't find a matching {@link ReadWriteEvent#target} for the {@link ReadWriteEvent#charUuid} (or
-             * {@link ReadWriteEvent#descUuid} if {@link ReadWriteEvent#target} is {@link Target#DESCRIPTOR}) which was given to
-             * {@link BleDevice#read(UUID, ReadWriteListener)}, {@link BleDevice#write(UUID, byte[])}, etc. This most likely
-             * means that the internal call to {@link BluetoothGatt#discoverServices()} didn't find any
-             * {@link BluetoothGattService} that contained a {@link BluetoothGattCharacteristic} for {@link ReadWriteEvent#charUuid()}.
-             * This can also happen if the internal call to get a BluetoothService(s) causes an exception (seen on some phones).
-             */
-            NO_MATCHING_TARGET,
-
-            /**
-             * Specific to {@link Target#RELIABLE_WRITE}, this means the underlying call to {@link BluetoothGatt#beginReliableWrite()}
-             * returned <code>false</code>.
-             */
-            RELIABLE_WRITE_FAILED_TO_BEGIN,
-
-            /**
-             * Specific to {@link Target#RELIABLE_WRITE}, this means {@link BleDevice#reliableWrite_begin(ReadWriteListener)} was
-             * called twice without an intervening call to either {@link BleDevice#reliableWrite_abort()} or {@link BleDevice#reliableWrite_execute()}.
-             */
-            RELIABLE_WRITE_ALREADY_BEGAN,
-
-            /**
-             * Specific to {@link Target#RELIABLE_WRITE}, this means {@link BleDevice#reliableWrite_abort()} or {@link BleDevice#reliableWrite_execute()}
-             * was called without a previous call to {@link BleDevice#reliableWrite_begin(ReadWriteListener)}.
-             */
-            RELIABLE_WRITE_NEVER_BEGAN,
-
-            /**
-             * Specific to {@link Target#RELIABLE_WRITE}, this means {@link BleDevice#reliableWrite_abort()} was called.
-             */
-            RELIABLE_WRITE_ABORTED,
-
-            /**
-             * You tried to do a read on a characteristic that is write-only, or
-             * vice-versa, or tried to read a notify-only characteristic, or etc., etc.
-             */
-            OPERATION_NOT_SUPPORTED,
-
-            /**
-             * The android api level doesn't support the lower level API call in the native stack. For example if you try to use
-             * {@link BleDevice#setMtu(int, ReadWriteListener)}, which requires API level 21, and you are at level 18.
-             */
-            ANDROID_VERSION_NOT_SUPPORTED,
-
-            /**
-             * {@link BluetoothGatt#setCharacteristicNotification(BluetoothGattCharacteristic, boolean)}
-             * returned <code>false</code> for an unknown reason. This {@link Status} is only relevant for calls to
-             * {@link BleDevice#enableNotify(UUID, ReadWriteListener)} and {@link BleDevice#disableNotify(UUID, ReadWriteListener)}
-             * (or the various overloads).
-             */
-            FAILED_TO_TOGGLE_NOTIFICATION,
-
-            /**
-             * {@link BluetoothGattCharacteristic#setValue(byte[])} (or one of its overloads) or
-             * {@link BluetoothGattDescriptor#setValue(byte[])} (or one of its overloads) returned <code>false</code>.
-             */
-            FAILED_TO_SET_VALUE_ON_TARGET,
-
-            /**
-             * The call to {@link BluetoothGatt#readCharacteristic(BluetoothGattCharacteristic)}
-             * or {@link BluetoothGatt#writeCharacteristic(BluetoothGattCharacteristic)}
-             * or etc. returned <code>false</code> and thus failed immediately
-             * for unknown reasons. No good remedy for this...perhaps try {@link BleManager#reset()}.
-             */
-            FAILED_TO_SEND_OUT,
-
-            /**
-             * The operation was cancelled by the device becoming {@link BleDeviceState#DISCONNECTED}.
-             */
-            CANCELLED_FROM_DISCONNECT,
-
-            /**
-             * The operation was cancelled because {@link BleManager} went {@link BleManagerState#TURNING_OFF} and/or
-             * {@link BleManagerState#OFF}. Note that if the user turns off BLE from their OS settings (airplane mode, etc.) then
-             * {@link ReadWriteEvent#status} could potentially be {@link #CANCELLED_FROM_DISCONNECT} because SweetBlue might get
-             * the disconnect callback before the turning off callback. Basic testing has revealed that this is *not* the case, but you never know.
-             * <br><br>
-             * Either way, the device was or will be disconnected.
-             */
-            CANCELLED_FROM_BLE_TURNING_OFF,
-
-            /**
-             * Used either when {@link ReadWriteEvent#type()} {@link Type#isRead()} and the stack returned a <code>null</code>
-             * value for {@link BluetoothGattCharacteristic#getValue()} despite the operation being otherwise "successful", <i>or</i>
-             * {@link BleDevice#write(UUID, byte[])} (or overload(s) ) were called with a null data parameter. For the read case, the library
-             * will throw an {@link BleManager.UhOhListener.UhOh#READ_RETURNED_NULL}, but hopefully it was just a temporary glitch. If the problem persists try {@link BleManager#reset()}.
-             */
-            NULL_DATA,
-
-            /**
-             * Used either when {@link ReadWriteEvent#type} {@link Type#isRead()} and the operation was "successful" but
-             * returned a zero-length array for {@link ReadWriteEvent#data}, <i>or</i> {@link BleDevice#write(UUID, byte[])} (or overload(s) )
-             * was called with a non-null but zero-length data parameter. Note that {@link ReadWriteEvent#data} will be a zero-length array for
-             * all other error statuses as well, for example {@link #NO_MATCHING_TARGET}, {@link #NOT_CONNECTED}, etc. In other words it's never null.
-             */
-            EMPTY_DATA,
-
-            /**
-             * For now only used when giving a negative or zero value to {@link BleDevice#setMtu(int, ReadWriteListener)}.
-             */
-            INVALID_DATA,
-
-            /**
-             * The operation failed in a "normal" fashion, at least relative to all the other strange ways an operation can fail. This means for
-             * example that {@link BluetoothGattCallback#onCharacteristicRead(BluetoothGatt, BluetoothGattCharacteristic, int)}
-             * returned a status code that was not zero. This could mean the device went out of range, was turned off, signal was disrupted,
-             * whatever. Often this means that the device is about to become {@link BleDeviceState#DISCONNECTED}. {@link ReadWriteEvent#gattStatus()}
-             * will most likely be non-zero, and you can check against the static fields in {@link BleStatuses} for more information.
-             *
-             * @see ReadWriteEvent#gattStatus()
-             */
-            REMOTE_GATT_FAILURE,
-
-            /**
-             * Operation took longer than time specified in {@link BleNodeConfig#taskTimeoutRequestFilter} so we cut it loose.
-             */
-            TIMED_OUT;
-
-            /**
-             * Returns <code>true</code> for {@link #CANCELLED_FROM_DISCONNECT} or {@link #CANCELLED_FROM_BLE_TURNING_OFF}.
-             */
-            public final boolean wasCancelled()
-            {
-                return this == CANCELLED_FROM_DISCONNECT || this == Status.CANCELLED_FROM_BLE_TURNING_OFF;
-            }
-
-            @Override public final boolean isNull()
-            {
-                return this == NULL;
-            }
-        }
-
-        /**
-         * The type of operation for a {@link ReadWriteEvent} - read, write, poll, etc.
-         */
-        public static enum Type implements UsesCustomNull
-        {
-            /**
-             * As of now, only used for {@link ConnectionFailListener.ConnectionFailEvent#txnFailReason()} in some cases.
-             */
-            NULL,
-
-            /**
-             * Associated with {@link BleDevice#read(UUID, ReadWriteListener)} or {@link BleDevice#readRssi(ReadWriteListener)}.
-             */
-            READ,
-
-            /**
-             * Associated with {@link BleDevice#write(UUID, byte[])} or {@link BleDevice#write(UUID, byte[], ReadWriteListener)}
-             * or {@link BleDevice#setMtu(int)} or {@link BleDevice#setName(String, UUID, ReadWriteListener)}.
-             *
-             * @see #isWrite()
-             */
-            WRITE,
-
-            /**
-             * Similar to {@link #WRITE} but under the hood {@link BluetoothGattCharacteristic#WRITE_TYPE_NO_RESPONSE} is used.
-             * See also {@link BluetoothGattCharacteristic#PROPERTY_WRITE_NO_RESPONSE}.
-             *
-             * @see #isWrite()
-             */
-            WRITE_NO_RESPONSE,
-
-            /**
-             * Similar to {@link #WRITE} but under the hood {@link BluetoothGattCharacteristic#WRITE_TYPE_SIGNED} is used.
-             * See also {@link BluetoothGattCharacteristic#PROPERTY_SIGNED_WRITE}.
-             *
-             * @see #isWrite()
-             */
-            WRITE_SIGNED,
-
-            /**
-             * Associated with {@link BleDevice#startPoll(UUID, Interval, ReadWriteListener)} or {@link BleDevice#startRssiPoll(Interval, ReadWriteListener)}.
-             */
-            POLL,
-
-            /**
-             * Associated with {@link BleDevice#enableNotify(UUID, ReadWriteListener)} when we  actually get a notification.
-             */
-            NOTIFICATION,
-
-            /**
-             * Similar to {@link #NOTIFICATION}, kicked off from {@link BleDevice#enableNotify(UUID, ReadWriteListener)}, but
-             * under the hood this is treated slightly differently.
-             */
-            INDICATION,
-
-            /**
-             * Associated with {@link BleDevice#startChangeTrackingPoll(UUID, Interval, ReadWriteListener)}
-             * or {@link BleDevice#enableNotify(UUID, Interval, ReadWriteListener)} where a force-read timeout is invoked.
-             */
-            PSUEDO_NOTIFICATION,
-
-            /**
-             * Associated with {@link BleDevice#enableNotify(UUID, ReadWriteListener)} and called when enabling the notification completes by writing to the
-             * Descriptor of the given {@link UUID}. {@link BleDevice.ReadWriteListener.Status#SUCCESS} doesn't <i>necessarily</i> mean that notifications will
-             * definitely now work (there may be other issues in the underlying stack), but it's a reasonable guarantee.
-             */
-            ENABLING_NOTIFICATION,
-
-            /**
-             * Opposite of {@link #ENABLING_NOTIFICATION}.
-             */
-            DISABLING_NOTIFICATION;
-
-            /**
-             * Returns <code>true</code> for every {@link Type} except {@link #isWrite()}, {@link #ENABLING_NOTIFICATION}, and
-             * {@link #DISABLING_NOTIFICATION}. Overall this convenience method is meant to tell you when we've <i>received</i> something from
-             * the device as opposed to writing something to it.
-             */
-            public final boolean isRead()
-            {
-                return !isWrite() && this != ENABLING_NOTIFICATION && this != DISABLING_NOTIFICATION;
-            }
-
-            /**
-             * Returns <code>true</code> if <code>this</code> is {@link #WRITE} or {@link #WRITE_NO_RESPONSE} or {@link #WRITE_SIGNED}.
-             */
-            public final boolean isWrite()
-            {
-                return this == WRITE || this == WRITE_NO_RESPONSE || this == WRITE_SIGNED;
-            }
-
-            /**
-             * Returns true if <code>this</code> is {@link #NOTIFICATION}, {@link #PSUEDO_NOTIFICATION}, or {@link #INDICATION}.
-             */
-            public final boolean isNotification()
-            {
-                return this.isNativeNotification() || this == PSUEDO_NOTIFICATION;
-            }
-
-            /**
-             * Subset of {@link #isNotification()}, returns <code>true</code> only for {@link #NOTIFICATION} and {@link #INDICATION}, i.e. only
-             * notifications who origin is an *actual* notification (or indication) sent from the remote BLE device.
-             */
-            public final boolean isNativeNotification()
-            {
-                return this == NOTIFICATION || this == INDICATION;
-            }
-
-            /**
-             * Returns the {@link BleNodeConfig.HistoricalDataLogFilter.Source} equivalent
-             * for this {@link BleDevice.ReadWriteListener.Type}, or {@link BleNodeConfig.HistoricalDataLogFilter.Source#NULL}.
-             */
-            public final BleNodeConfig.HistoricalDataLogFilter.Source toHistoricalDataSource()
-            {
-                switch (this)
-                {
-                    case READ:
-                        return BleNodeConfig.HistoricalDataLogFilter.Source.READ;
-                    case POLL:
-                        return BleNodeConfig.HistoricalDataLogFilter.Source.POLL;
-                    case NOTIFICATION:
-                        return BleNodeConfig.HistoricalDataLogFilter.Source.NOTIFICATION;
-                    case INDICATION:
-                        return BleNodeConfig.HistoricalDataLogFilter.Source.INDICATION;
-                    case PSUEDO_NOTIFICATION:
-                        return BleNodeConfig.HistoricalDataLogFilter.Source.PSUEDO_NOTIFICATION;
-                }
-
-                return BleNodeConfig.HistoricalDataLogFilter.Source.NULL;
-            }
-
-            @Override public final boolean isNull()
-            {
-                return this == NULL;
-            }
-        }
-
-        /**
-         * The type of GATT "object", provided by {@link ReadWriteEvent#target()}.
-         */
-        public static enum Target implements UsesCustomNull
-        {
-            /**
-             * As of now, only used for {@link ConnectionFailListener.ConnectionFailEvent#txnFailReason()} in some cases.
-             */
-            NULL,
-
-            /**
-             * The {@link ReadWriteEvent} returned has to do with a {@link BluetoothGattCharacteristic} under the hood.
-             */
-            CHARACTERISTIC,
-
-            /**
-             * The {@link ReadWriteEvent} returned has to do with a {@link BluetoothGattDescriptor} under the hood.
-             */
-            DESCRIPTOR,
-
-            /**
-             * The {@link ReadWriteEvent} is coming in from using {@link BleDevice#readRssi(ReadWriteListener)} or
-             * {@link BleDevice#startRssiPoll(Interval, ReadWriteListener)}.
-             */
-            RSSI,
-
-            /**
-             * The {@link ReadWriteEvent} is coming in from using {@link BleDevice#setMtu(int, ReadWriteListener)} or overloads.
-             */
-            MTU,
-
-            /**
-             * The {@link ReadWriteEvent} is coming in from using <code>reliableWrite_*()</code> overloads such as {@link BleDevice#reliableWrite_begin(ReadWriteListener)},
-             * {@link BleDevice#reliableWrite_execute()}, etc.
-             */
-            RELIABLE_WRITE,
-
-            /**
-             * The {@link ReadWriteEvent} is coming in from using {@link BleDevice#setConnectionPriority(BleConnectionPriority, ReadWriteListener)} or overloads.
-             */
-            CONNECTION_PRIORITY;
-
-            @Override public final boolean isNull()
-            {
-                return this == NULL;
-            }
-        }
-
-        /**
-         * Provides a bunch of information about a completed read, write, or notification.
-         */
-        @com.idevicesinc.sweetblue.annotations.Immutable
-        public static class ReadWriteEvent extends com.idevicesinc.sweetblue.utils.Event implements com.idevicesinc.sweetblue.utils.UsesCustomNull
-        {
-            /**
-             * Value used in place of <code>null</code>, either indicating that {@link #descUuid} isn't used for the {@link ReadWriteEvent}
-             * because {@link #target} is {@link Target#CHARACTERISTIC}, or that both {@link #descUuid} and {@link #charUuid} aren't applicable
-             * because {@link #target} is {@link Target#RSSI}.
-             */
-            public static final UUID NON_APPLICABLE_UUID = Uuids.INVALID;
-
-            /**
-             * The {@link BleDevice} this {@link ReadWriteEvent} is for.
-             */
-            public final BleDevice device()
-            {
-                return m_device;
-            }
-
-            private final BleDevice m_device;
-
-            /**
-             * Convience to return the mac address of {@link #device()}.
-             */
-            public final String macAddress()
-            {
-                return m_device.getMacAddress();
-            }
-
-            /**
-             * The type of operation, read, write, etc.
-             */
-            public final Type type()
-            {
-                return m_type;
-            }
-
-            private final Type m_type;
-
-            /**
-             * The type of GATT object this {@link ReadWriteEvent} is for, currently characteristic, descriptor, or rssi.
-             */
-            public final Target target()
-            {
-                return m_target;
-            }
-
-            private final Target m_target;
-
-            /**
-             * The {@link UUID} of the service associated with this {@link ReadWriteEvent}. This will always be a non-null {@link UUID},
-             * even if {@link #target} is {@link Target#DESCRIPTOR}. If {@link #target} is {@link Target#RSSI} then this will be referentially equal
-             * (i.e. you can use == to compare) to {@link #NON_APPLICABLE_UUID}.
-             */
-            public final UUID serviceUuid()
-            {
-                return m_serviceUuid;
-            }
-
-            private final UUID m_serviceUuid;
-
-            /**
-             * The {@link UUID} of the characteristic associated with this {@link ReadWriteEvent}. This will always be a non-null {@link UUID},
-             * even if {@link #target} is {@link Target#DESCRIPTOR}. If {@link #target} is {@link Target#RSSI} then this will be referentially equal
-             * (i.e. you can use == to compare) to {@link #NON_APPLICABLE_UUID}.
-             */
-            public final UUID charUuid()
-            {
-                return m_charUuid;
-            }
-
-            private final UUID m_charUuid;
-
-            /**
-             * The {@link UUID} of the descriptor associated with this {@link ReadWriteEvent}. If {@link #target} is
-             * {@link Target#CHARACTERISTIC} or {@link Target#RSSI} then this will be referentially equal
-             * (i.e. you can use == to compare) to {@link #NON_APPLICABLE_UUID}.
-             */
-            public final UUID descUuid()
-            {
-                return m_descUuid;
-            }
-
-            private final UUID m_descUuid;
-
-            /**
-             * The data sent to the peripheral if {@link ReadWriteEvent#type} {@link Type#isWrite()}, otherwise the data received from the
-             * peripheral if {@link ReadWriteEvent#type} {@link Type#isRead()}. This will never be <code>null</code>. For error cases it will be a
-             * zero-length array.
-             */
-            public final @Nullable(Nullable.Prevalence.NEVER) byte[] data()
-            {
-                return m_data;
-            }
-
-            private final byte[] m_data;
-
-            /**
-             * This value gets updated as a result of a {@link BleDevice#readRssi(ReadWriteListener)} call. It will
-             * always be equivalent to {@link BleDevice#getRssi()} but is included here for convenience.
-             *
-             * @see BleDevice#getRssi()
-             * @see BleDevice#getRssiPercent()
-             * @see BleDevice#getDistance()
-             */
-            public final int rssi()
-            {
-                return m_rssi;
-            }
-
-            private final int m_rssi;
-
-            /**
-             * This value gets set as a result of a {@link BleDevice#setMtu(int, ReadWriteListener)} call. The value returned
-             * will be the same as that given to {@link BleDevice#setMtu(int, ReadWriteListener)}, which means it will be the
-             * same as {@link BleDevice#getMtu()} if {@link #status()} equals {@link ReadWriteListener.Status#SUCCESS}.
-             *
-             * @see BleDevice#getMtu()
-             */
-            public final int mtu()
-            {
-                return m_mtu;
-            }
-
-            private final int m_mtu;
-
-            /**
-             * Indicates either success or the type of failure. Some values of {@link Status} are not used for certain values of {@link Type}.
-             * For example a {@link Type#NOTIFICATION} cannot fail with {@link BleDevice.ReadWriteListener.Status#TIMED_OUT}.
-             */
-            public final Status status()
-            {
-                return m_status;
-            }
-
-            private final Status m_status;
-
-            /**
-             * Time spent "over the air" - so in the native stack, processing in
-             * the peripheral's embedded software, what have you. This will
-             * always be slightly less than {@link #time_total()}.
-             */
-            public final Interval time_ota()
-            {
-                return m_transitTime;
-            }
-
-            private final Interval m_transitTime;
-
-            /**
-             * Total time it took for the operation to complete, whether success
-             * or failure. This mainly includes time spent in the internal job
-             * queue plus {@link ReadWriteEvent#time_ota()}. This will always be
-             * longer than {@link #time_ota()}, though usually only slightly so.
-             */
-            public final Interval time_total()
-            {
-                return m_totalTime;
-            }
-
-            private final Interval m_totalTime;
-
-            /**
-             * The native gatt status returned from the stack, if applicable. If the {@link #status} returned is, for example,
-             * {@link ReadWriteListener.Status#NO_MATCHING_TARGET}, then the operation didn't even reach the point where a gatt status is
-             * provided, in which case this member is set to {@link BleStatuses#GATT_STATUS_NOT_APPLICABLE} (value of
-             * {@value com.idevicesinc.sweetblue.BleStatuses#GATT_STATUS_NOT_APPLICABLE}). Otherwise it will be <code>0</code> for success or greater than
-             * <code>0</code> when there's an issue. <i>Generally</i> this value will only be meaningful when {@link #status} is
-             * {@link ReadWriteListener.Status#SUCCESS} or {@link ReadWriteListener.Status#REMOTE_GATT_FAILURE}. There are
-             * also some cases where this will be 0 for success but {@link #status} is for example
-             * {@link ReadWriteListener.Status#NULL_DATA} - in other words the underlying stack deemed the operation a success but SweetBlue
-             * disagreed. For this reason it's recommended to treat this value as a debugging tool and use {@link #status} for actual
-             * application logic if possible.
-             * <br><br>
-             * See {@link BluetoothGatt} for its static <code>GATT_*</code> status code members. Also see the source code of
-             * {@link BleStatuses} for SweetBlue's more comprehensive internal reference list of gatt status values. This list may not be
-             * totally accurate or up-to-date, nor may it match GATT_ values used by the bluetooth stack on your phone.
-             */
-            public final int gattStatus()
-            {
-                return m_gattStatus;
-            }
-
-            private final int m_gattStatus;
-
-            /**
-             * This returns <code>true</code> if this event was the result of an explicit call through SweetBlue, e.g. through
-             * {@link BleDevice#read(UUID)}, {@link BleDevice#write(UUID, byte[])}, etc. It will return <code>false</code> otherwise,
-             * which can happen if for example you use {@link BleDevice#getNativeGatt()} to bypass SweetBlue for whatever reason.
-             * Another theoretical case is if you make an explicit call through SweetBlue, then you get {@link com.idevicesinc.sweetblue.BleDevice.ReadWriteListener.Status#TIMED_OUT},
-             * but then the native stack eventually *does* come back with something - this has never been observed, but it is possible.
-             */
-            public final boolean solicited()
-            {
-                return m_solicited;
-            }
-
-            private final boolean m_solicited;
-
-            /**
-             * This value gets set as a result of a {@link BleDevice#setConnectionPriority(BleConnectionPriority, ReadWriteListener)} call. The value returned
-             * will be the same as that given to {@link BleDevice#setConnectionPriority(BleConnectionPriority, ReadWriteListener)}, which means it will be the
-             * same as {@link BleDevice#getConnectionPriority()} if {@link #status()} equals {@link ReadWriteListener.Status#SUCCESS}.
-             *
-             * @see BleDevice#getConnectionPriority()
-             */
-            public final BleConnectionPriority connectionPriority()
-            {
-                return m_connectionPriority;
-            }
-
-            private final BleConnectionPriority m_connectionPriority;
-
-
-            /**
-             * This is the {@link DescriptorFilter} that was used for this read/write operation, if any.
-             */
-            public final @Nullable(Prevalence.NORMAL) DescriptorFilter descriptorFilter()
-            {
-                return m_descriptorFilter;
-            }
-
-            private final DescriptorFilter m_descriptorFilter;
-
-
-            ReadWriteEvent(BleDevice device, UUID serviceUuid, UUID charUuid, UUID descUuid, DescriptorFilter descFilter, Type type, Target target, byte[] data, Status status, int gattStatus, double totalTime, double transitTime, boolean solicited)
-            {
-                this.m_device = device;
-                this.m_serviceUuid = serviceUuid != null ? serviceUuid : NON_APPLICABLE_UUID;
-                this.m_charUuid = charUuid != null ? charUuid : NON_APPLICABLE_UUID;
-                this.m_descUuid = descUuid != null ? descUuid : NON_APPLICABLE_UUID;
-                this.m_type = type;
-                this.m_target = target;
-                this.m_status = status;
-                this.m_gattStatus = gattStatus;
-                this.m_totalTime = Interval.secs(totalTime);
-                this.m_transitTime = Interval.secs(transitTime);
-                this.m_data = data != null ? data : P_Const.EMPTY_BYTE_ARRAY;
-                this.m_rssi = device.getRssi();
-                this.m_mtu = device.getMtu();
-                this.m_solicited = solicited;
-                this.m_connectionPriority = device.getConnectionPriority();
-                this.m_descriptorFilter = descFilter;
-            }
-
-
-            ReadWriteEvent(BleDevice device, Type type, int rssi, Status status, int gattStatus, double totalTime, double transitTime, boolean solicited)
-            {
-                this.m_device = device;
-                this.m_charUuid = NON_APPLICABLE_UUID;
-                this.m_descUuid = NON_APPLICABLE_UUID;
-                this.m_serviceUuid = NON_APPLICABLE_UUID;
-                this.m_type = type;
-                this.m_target = Target.RSSI;
-                this.m_status = status;
-                this.m_gattStatus = gattStatus;
-                this.m_totalTime = Interval.secs(totalTime);
-                this.m_transitTime = Interval.secs(transitTime);
-                this.m_data = P_Const.EMPTY_BYTE_ARRAY;
-                this.m_rssi = status == Status.SUCCESS ? rssi : device.getRssi();
-                this.m_mtu = device.getMtu();
-                this.m_solicited = solicited;
-                this.m_connectionPriority = device.getConnectionPriority();
-                this.m_descriptorFilter = null;
-            }
-
-            ReadWriteEvent(BleDevice device, int mtu, Status status, int gattStatus, double totalTime, double transitTime, boolean solicited)
-            {
-                this.m_device = device;
-                this.m_charUuid = NON_APPLICABLE_UUID;
-                this.m_descUuid = NON_APPLICABLE_UUID;
-                this.m_serviceUuid = NON_APPLICABLE_UUID;
-                this.m_type = Type.WRITE;
-                this.m_target = Target.MTU;
-                this.m_status = status;
-                this.m_gattStatus = gattStatus;
-                this.m_totalTime = Interval.secs(totalTime);
-                this.m_transitTime = Interval.secs(transitTime);
-                this.m_data = P_Const.EMPTY_BYTE_ARRAY;
-                this.m_rssi = device.getRssi();
-                this.m_mtu = status == Status.SUCCESS ? mtu : device.getMtu();
-                this.m_solicited = solicited;
-                this.m_connectionPriority = device.getConnectionPriority();
-                this.m_descriptorFilter = null;
-            }
-
-            ReadWriteEvent(BleDevice device, BleConnectionPriority connectionPriority, Status status, int gattStatus, double totalTime, double transitTime, boolean solicited)
-            {
-                this.m_device = device;
-                this.m_charUuid = NON_APPLICABLE_UUID;
-                this.m_descUuid = NON_APPLICABLE_UUID;
-                this.m_serviceUuid = NON_APPLICABLE_UUID;
-                this.m_type = Type.WRITE;
-                this.m_target = Target.CONNECTION_PRIORITY;
-                this.m_status = status;
-                this.m_gattStatus = gattStatus;
-                this.m_totalTime = Interval.secs(totalTime);
-                this.m_transitTime = Interval.secs(transitTime);
-                this.m_data = P_Const.EMPTY_BYTE_ARRAY;
-                this.m_rssi = device.getRssi();
-                this.m_mtu = device.getMtu();
-                this.m_solicited = solicited;
-                this.m_connectionPriority = connectionPriority;
-                this.m_descriptorFilter = null;
-            }
-
-            static ReadWriteEvent NULL(BleDevice device)
-            {
-                return new ReadWriteEvent(device, NON_APPLICABLE_UUID, NON_APPLICABLE_UUID, NON_APPLICABLE_UUID, null, Type.NULL, Target.NULL, P_Const.EMPTY_BYTE_ARRAY, Status.NULL, BleStatuses.GATT_STATUS_NOT_APPLICABLE, Interval.ZERO.secs(), Interval.ZERO.secs(), /*solicited=*/true);
-            }
-
-            /**
-             * Forwards {@link BleDevice#getNativeService(UUID)}, which will be nonnull
-             * if {@link #target()} is {@link Target#CHARACTERISTIC} or {@link Target#DESCRIPTOR}.
-             */
-            public final @Nullable(Prevalence.NORMAL) BluetoothGattService service()
-            {
-                return device().getNativeService(serviceUuid());
-            }
-
-            /**
-             * Forwards {@link BleDevice#getNativeCharacteristic(UUID, UUID)}, which will be nonnull
-             * if {@link #target()} is {@link Target#CHARACTERISTIC} or {@link Target#DESCRIPTOR}.
-             */
-            public final @Nullable(Prevalence.NORMAL) BluetoothGattCharacteristic characteristic()
-            {
-                return device().getNativeCharacteristic(serviceUuid(), charUuid(), descriptorFilter());
-            }
-
-            /**
-             * Forwards {@link BleDevice#getNativeDescriptor_inChar(UUID, UUID)}, which will be nonnull
-             * if {@link #target()} is {@link Target#DESCRIPTOR}.
-             */
-            public final @Nullable(Prevalence.NORMAL) BluetoothGattDescriptor descriptor()
-            {
-                return device().getNativeDescriptor_inChar(charUuid(), descUuid());
-            }
-
-            /**
-             * Convenience method for checking if {@link ReadWriteEvent#status} equals {@link BleDevice.ReadWriteListener.Status#SUCCESS}.
-             */
-            public final boolean wasSuccess()
-            {
-                return status() == Status.SUCCESS;
-            }
-
-            /**
-             * Forwards {@link Status#wasCancelled()}.
-             */
-            public final boolean wasCancelled()
-            {
-                return status().wasCancelled();
-            }
-
-            /**
-             * Forwards {@link Type#isNotification()}.
-             */
-            public final boolean isNotification()
-            {
-                return type().isNotification();
-            }
-
-            /**
-             * Forwards {@link Type#isRead()}.
-             */
-            public final boolean isRead()
-            {
-                return type().isRead();
-            }
-
-            /**
-             * Forwards {@link Type#isWrite()}.
-             */
-            public final boolean isWrite()
-            {
-                return type().isWrite();
-            }
-
-            /**
-             * Returns the first byte from {@link #data()}, or 0x0 if not available.
-             */
-            public final byte data_byte()
-            {
-                return data().length > 0 ? data()[0] : 0x0;
-            }
-
-            /**
-             * Convenience method that attempts to parse the data as a UTF-8 string.
-             */
-            public final @Nullable(Prevalence.NEVER) String data_utf8()
-            {
-                return data_string("UTF-8");
-            }
-
-            /**
-             * Best effort parsing of {@link #data()} as a {@link String}. For now simply forwards {@link #data_utf8()}.
-             * In the future may try to autodetect encoding first.
-             */
-            public final @Nullable(Prevalence.NEVER) String data_string()
-            {
-                return data_utf8();
-            }
-
-            /**
-             * Convenience method that attempts to parse {@link #data()} as a {@link String} with the given charset, for example <code>"UTF-8"</code>.
-             */
-            public final @Nullable(Prevalence.NEVER) String data_string(final String charset)
-            {
-                return Utils_String.getStringValue(data(), charset);
-            }
-
-            /**
-             * Convenience method that attempts to parse {@link #data()} as an int.
-             *
-             * @param reverse - Set to true if you are connecting to a device with {@link java.nio.ByteOrder#BIG_ENDIAN} byte order, to automatically reverse the bytes before conversion.
-             */
-            public final @Nullable(Prevalence.NEVER) int data_int(boolean reverse)
-            {
-                if (reverse)
-                {
-                    byte[] data = data();
-                    Utils_Byte.reverseBytes(data);
-                    return Utils_Byte.bytesToInt(data);
-                }
-                else
-                {
-                    return Utils_Byte.bytesToInt(data());
-                }
-            }
-
-            /**
-             * Convenience method that attempts to parse {@link #data()} as a short.
-             *
-             * @param reverse - Set to true if you are connecting to a device with {@link java.nio.ByteOrder#BIG_ENDIAN} byte order, to automatically reverse the bytes before conversion.
-             */
-            public final @Nullable(Prevalence.NEVER) short data_short(boolean reverse)
-            {
-                if (reverse)
-                {
-                    byte[] data = data();
-                    Utils_Byte.reverseBytes(data);
-                    return Utils_Byte.bytesToShort(data);
-                }
-                else
-                {
-                    return Utils_Byte.bytesToShort(data());
-                }
-            }
-
-            /**
-             * Convenience method that attempts to parse {@link #data()} as a long.
-             *
-             * @param reverse - Set to true if you are connecting to a device with {@link java.nio.ByteOrder#BIG_ENDIAN} byte order, to automatically reverse the bytes before conversion.
-             */
-            public final @Nullable(Prevalence.NEVER) long data_long(boolean reverse)
-            {
-                if (reverse)
-                {
-                    byte[] data = data();
-                    Utils_Byte.reverseBytes(data);
-                    return Utils_Byte.bytesToLong(data);
-                }
-                else
-                {
-                    return Utils_Byte.bytesToLong(data());
-                }
-            }
-
-            /**
-             * Forwards {@link Type#isNull()}.
-             */
-            @Override public final boolean isNull()
-            {
-                return type().isNull();
-            }
-
-            @Override public final String toString()
-            {
-                if (isNull())
-                {
-                    return Type.NULL.toString();
-                }
-                else
-                {
-                    if (target() == Target.RSSI)
-                    {
-                        return Utils_String.toString
-                                (
-                                        this.getClass(),
-                                        "status", status(),
-                                        "type", type(),
-                                        "target", target(),
-                                        "rssi", rssi(),
-                                        "gattStatus", device().getManager().getLogger().gattStatus(gattStatus())
-                                );
-                    }
-                    else if (target() == Target.MTU)
-                    {
-                        return Utils_String.toString
-                                (
-                                        this.getClass(),
-                                        "status", status(),
-                                        "type", type(),
-                                        "target", target(),
-                                        "mtu", mtu(),
-                                        "gattStatus", device().getManager().getLogger().gattStatus(gattStatus())
-                                );
-                    }
-                    else if (target() == Target.CONNECTION_PRIORITY)
-                    {
-                        return Utils_String.toString
-                                (
-                                        this.getClass(),
-                                        "status", status(),
-                                        "type", type(),
-                                        "target", target(),
-                                        "connectionPriority", connectionPriority(),
-                                        "gattStatus", device().getManager().getLogger().gattStatus(gattStatus())
-                                );
-                    }
-                    else
-                    {
-                        return Utils_String.toString
-                                (
-                                        this.getClass(),
-                                        "status", status(),
-                                        "data", Arrays.toString(data()),
-                                        "type", type(),
-                                        "charUuid", device().getManager().getLogger().uuidName(charUuid()),
-                                        "gattStatus", device().getManager().getLogger().gattStatus(gattStatus())
-                                );
-                    }
-                }
-            }
-        }
-
-        /**
-         * Called when a read or write is complete or when a notification comes in or when a notification is enabled/disabled.
-         */
-//		void onEvent(final ReadWriteEvent e);
-    }
-
-    /**
-     * Provide an implementation to {@link BleDevice#setListener_State(StateListener)} and/or
-     * {@link BleManager#setListener_DeviceState(BleDevice.StateListener)} to receive state change events.
-     *
-     * @see BleDeviceState
-     * @see BleDevice#setListener_State(StateListener)
-     * @deprecated - Refactored to {@link DeviceStateListener}.
-     */
-    @com.idevicesinc.sweetblue.annotations.Lambda
-    public static interface StateListener
-    {
-        /**
-         * Subclass that adds the device field.
-         */
-        @Immutable
-        public static class StateEvent extends State.ChangeEvent<BleDeviceState>
-        {
-            /**
-             * The device undergoing the state change.
-             */
-            public final BleDevice device()
-            {
-                return m_device;
-            }
-
-            private final BleDevice m_device;
-
-            /**
-             * Convience to return the mac address of {@link #device()}.
-             */
-            public final String macAddress()
-            {
-                return m_device.getMacAddress();
-            }
-
-            /**
-             * The change in gattStatus that may have precipitated the state change, or {@link BleStatuses#GATT_STATUS_NOT_APPLICABLE}.
-             * For example if {@link #didEnter(State)} with {@link BleDeviceState#DISCONNECTED} is <code>true</code> and
-             * {@link #didExit(State)} with {@link BleDeviceState#CONNECTING} is also <code>true</code> then {@link #gattStatus()} may be greater
-             * than zero and give some further hint as to why the connection failed.
-             * <br><br>
-             * See {@link ConnectionFailListener.ConnectionFailEvent#gattStatus()} for more information.
-             */
-            public final int gattStatus()
-            {
-                return m_gattStatus;
-            }
-
-            private final int m_gattStatus;
-
-            StateEvent(BleDevice device, int oldStateBits, int newStateBits, int intentMask, int gattStatus)
-            {
-                super(oldStateBits, newStateBits, intentMask);
-
-                this.m_device = device;
-                this.m_gattStatus = gattStatus;
-            }
-
-            @Override public final String toString()
-            {
-                if (device().is(RECONNECTING_SHORT_TERM))
-                {
-                    return Utils_String.toString
-                            (
-                                    this.getClass(),
-                                    "device", device().getName_debug(),
-                                    "entered", Utils_String.toString(enterMask(), BleDeviceState.VALUES()),
-                                    "exited", Utils_String.toString(exitMask(), BleDeviceState.VALUES()),
-                                    "current", Utils_String.toString(newStateBits(), BleDeviceState.VALUES()),
-                                    "current_native", Utils_String.toString(device().getNativeStateMask(), BleDeviceState.VALUES()),
-                                    "gattStatus", device().logger().gattStatus(gattStatus())
-                            );
-                }
-                else
-                {
-                    return Utils_String.toString
-                            (
-                                    this.getClass(),
-                                    "device", device().getName_debug(),
-                                    "entered", Utils_String.toString(enterMask(), BleDeviceState.VALUES()),
-                                    "exited", Utils_String.toString(exitMask(), BleDeviceState.VALUES()),
-                                    "current", Utils_String.toString(newStateBits(), BleDeviceState.VALUES()),
-                                    "gattStatus", device().logger().gattStatus(gattStatus())
-                            );
-                }
-            }
-        }
-
-        /**
-         * Called when a device's bitwise {@link BleDeviceState} changes. As many bits as possible are flipped at the same time.
-         */
-        void onEvent(final StateEvent e);
-    }
-
-    /**
-     * Provide an implementation of this callback to {@link BleDevice#setListener_ConnectionFail(ConnectionFailListener)}.
-     *
-     * @see DefaultConnectionFailListener
-     * @see BleDevice#setListener_ConnectionFail(ConnectionFailListener)
-     */
-    @com.idevicesinc.sweetblue.annotations.Lambda
-    public static interface ConnectionFailListener extends BleNode.ConnectionFailListener
-    {
-        /**
-         * The reason for the connection failure.
-         */
-        public static enum Status implements UsesCustomNull
-        {
-            /**
-             * Used in place of Java's built-in <code>null</code> wherever needed. As of now, the {@link ConnectionFailEvent#status()} given
-             * to {@link ConnectionFailListener#onEvent(ConnectionFailEvent)} will *never* be {@link ConnectionFailListener.Status#NULL}.
-             */
-            NULL,
-
-            /**
-             * A call was made to {@link BleDevice#connect()} or its overloads
-             * but {@link ConnectionFailEvent#device()} is already
-             * {@link BleDeviceState#CONNECTING} or {@link BleDeviceState#CONNECTED}.
-             */
-            ALREADY_CONNECTING_OR_CONNECTED,
-
-            /**
-             * {@link BleDevice#connect()} (or various overloads) was called on {@link BleDevice#NULL}.
-             */
-            NULL_DEVICE,
-
-            /**
-             * Couldn't connect through {@link BluetoothDevice#connectGatt(android.content.Context, boolean, BluetoothGattCallback)}
-             * because it (a) {@link Timing#IMMEDIATELY} returned <code>null</code>, (b) {@link Timing#EVENTUALLY} returned a bad
-             * {@link ConnectionFailEvent#gattStatus()}, or (c) {@link Timing#TIMED_OUT}.
-             */
-            NATIVE_CONNECTION_FAILED,
-
-            /**
-             * {@link BluetoothGatt#discoverServices()} either (a) {@link Timing#IMMEDIATELY} returned <code>false</code>,
-             * (b) {@link Timing#EVENTUALLY} returned a bad {@link ConnectionFailEvent#gattStatus()}, or (c) {@link Timing#TIMED_OUT}.
-             */
-            DISCOVERING_SERVICES_FAILED,
-
-            /**
-             * {@link BluetoothDevice#createBond()} either (a) {@link Timing#IMMEDIATELY} returned <code>false</code>,
-             * (b) {@link Timing#EVENTUALLY} returned a bad {@link ConnectionFailEvent#bondFailReason()}, or (c) {@link Timing#TIMED_OUT}.
-             * <br><br>
-             * NOTE: {@link BleDeviceConfig#bondingFailFailsConnection} must be <code>true</code> for this {@link Status} to be applicable.
-             *
-             * @see BondListener
-             */
-            BONDING_FAILED,
-
-            /**
-             * The {@link BleTransaction} instance passed to {@link BleDevice#connect(BleTransaction.Auth)} or
-             * {@link BleDevice#connect(BleTransaction.Auth, BleTransaction.Init)} failed through {@link BleTransaction#fail()}.
-             */
-            AUTHENTICATION_FAILED,
-
-            /**
-             * {@link BleTransaction} instance passed to {@link BleDevice#connect(BleTransaction.Init)} or
-             * {@link BleDevice#connect(BleTransaction.Auth, BleTransaction.Init)} failed through {@link BleTransaction#fail()}.
-             */
-            INITIALIZATION_FAILED,
-
-            /**
-             * Remote peripheral randomly disconnected sometime during the connection process. Similar to {@link #NATIVE_CONNECTION_FAILED}
-             * but only occurs after the device is {@link BleDeviceState#CONNECTED} and we're going through
-             * {@link BleDeviceState#DISCOVERING_SERVICES}, or {@link BleDeviceState#AUTHENTICATING}, or what have you. It might
-             * be from the device turning off, or going out of range, or any other random reason.
-             */
-            ROGUE_DISCONNECT,
-
-            /**
-             * {@link BleDevice#disconnect()} was called sometime during the connection process.
-             */
-            EXPLICIT_DISCONNECT,
-
-            /**
-             * {@link BleManager#reset()} or {@link BleManager#turnOff()} (or
-             * overloads) were called sometime during the connection process.
-             * Basic testing reveals that this value will also be used when a
-             * user turns off BLE by going through their OS settings, airplane
-             * mode, etc., but it's not absolutely *certain* that this behavior
-             * is consistent across phones. For example there might be a phone
-             * that kills all connections before going through the ble turn-off
-             * process, in which case SweetBlue doesn't know the difference and
-             * {@link #ROGUE_DISCONNECT} will be used.
-             */
-            BLE_TURNING_OFF;
-
-            /**
-             * Returns true for {@link #EXPLICIT_DISCONNECT} or {@link #BLE_TURNING_OFF}.
-             */
-            public final boolean wasCancelled()
-            {
-                return this == EXPLICIT_DISCONNECT || this == BLE_TURNING_OFF;
-            }
-
-            /**
-             * Same as {@link #wasCancelled()}, at least for now, but just being more "explicit", no pun intended.
-             */
-            final boolean wasExplicit()
-            {
-                return wasCancelled();
-            }
-
-            /**
-             * Whether this status honors a {@link BleNode.ConnectionFailListener.Please#isRetry()}. Returns <code>false</code> if {@link #wasCancelled()} or
-             * <code>this</code> is {@link #ALREADY_CONNECTING_OR_CONNECTED}.
-             */
-            public final boolean allowsRetry()
-            {
-                return !this.wasCancelled() && this != ALREADY_CONNECTING_OR_CONNECTED;
-            }
-
-            @Override public final boolean isNull()
-            {
-                return this == NULL;
-            }
-
-            /**
-             * Convenience method that returns whether this status is something that your app user would usually care about.
-             * If this returns <code>true</code> then perhaps you should pop up a {@link android.widget.Toast} or something of that nature.
-             */
-            public final boolean shouldBeReportedToUser()
-            {
-                return this == NATIVE_CONNECTION_FAILED ||
-                        this == DISCOVERING_SERVICES_FAILED ||
-                        this == BONDING_FAILED ||
-                        this == AUTHENTICATION_FAILED ||
-                        this == INITIALIZATION_FAILED ||
-                        this == ROGUE_DISCONNECT;
-            }
-        }
-
-        /**
-         * For {@link Status#NATIVE_CONNECTION_FAILED}, {@link Status#DISCOVERING_SERVICES_FAILED}, and
-         * {@link Status#BONDING_FAILED}, gives further timing information on when the failure took place.
-         * For all other reasons, {@link ConnectionFailEvent#timing()} will be {@link #NOT_APPLICABLE}.
-         */
-        public static enum Timing
-        {
-            /**
-             * For reasons like {@link ConnectionFailListener.Status#BLE_TURNING_OFF}, {@link ConnectionFailListener.Status#AUTHENTICATION_FAILED}, etc.
-             */
-            NOT_APPLICABLE,
-
-            /**
-             * The operation failed immediately, for example by the native stack method returning <code>false</code> from a method call.
-             */
-            IMMEDIATELY,
-
-            /**
-             * The operation failed in the native stack. {@link ConnectionFailListener.ConnectionFailEvent#gattStatus()}
-             * will probably be a positive number if {@link ConnectionFailListener.ConnectionFailEvent#status()} is
-             * {@link ConnectionFailListener.Status#NATIVE_CONNECTION_FAILED} or {@link ConnectionFailListener.Status#DISCOVERING_SERVICES_FAILED}.
-             * {@link ConnectionFailListener.ConnectionFailEvent#bondFailReason()} will probably be a positive number if
-             * {@link ConnectionFailListener.ConnectionFailEvent#status()} is {@link ConnectionFailListener.Status#BONDING_FAILED}.
-             */
-            EVENTUALLY,
-
-            /**
-             * The operation took longer than the time dictated by {@link BleDeviceConfig#taskTimeoutRequestFilter}.
-             */
-            TIMED_OUT;
-        }
-
-        /**
-         * Structure passed to {@link ConnectionFailListener#onEvent(ConnectionFailEvent)} to provide more info about how/why the connection failed.
-         */
-        @Immutable
-        public static class ConnectionFailEvent extends BleNode.ConnectionFailListener.ConnectionFailEvent implements UsesCustomNull
-        {
-            /**
-             * The {@link BleDevice} this {@link ConnectionFailEvent} is for.
-             */
-            public final BleDevice device()
-            {
-                return m_device;
-            }
-
-            private final BleDevice m_device;
-
-            /**
-             * Convience to return the mac address of {@link #device()}.
-             */
-            public final String macAddress()
-            {
-                return m_device.getMacAddress();
-            }
-
-            /**
-             * General reason why the connection failed.
-             */
-            public final Status status()
-            {
-                return m_status;
-            }
-
-            private final Status m_status;
-
-            /**
-             * See {@link BondEvent#failReason()}.
-             */
-            public final int bondFailReason()
-            {
-                return m_bondFailReason;
-            }
-
-            private final int m_bondFailReason;
-
-            /**
-             * The highest state reached by the latest connection attempt.
-             */
-            public final BleDeviceState highestStateReached_latest()
-            {
-                return m_highestStateReached_latest;
-            }
-
-            private final BleDeviceState m_highestStateReached_latest;
-
-            /**
-             * The highest state reached during the whole connection attempt cycle.
-             * <br><br>
-             * TIP: You can use this to keep the visual feedback in your connection progress UI "bookmarked" while the connection retries
-             * and goes through previous states again.
-             */
-            public final BleDeviceState highestStateReached_total()
-            {
-                return m_highestStateReached_total;
-            }
-
-            private final BleDeviceState m_highestStateReached_total;
-
-            /**
-             * Further timing information for {@link Status#NATIVE_CONNECTION_FAILED}, {@link Status#BONDING_FAILED}, and {@link Status#DISCOVERING_SERVICES_FAILED}.
-             */
-            public final Timing timing()
-            {
-                return m_timing;
-            }
-
-            private final Timing m_timing;
-
-            /**
-             * If {@link ConnectionFailEvent#status()} is {@link Status#AUTHENTICATION_FAILED} or
-             * {@link Status#INITIALIZATION_FAILED} and {@link BleTransaction#fail()} was called somewhere in or
-             * downstream of {@link ReadWriteListener#onEvent(Event)}, then the {@link ReadWriteEvent} passed there will be returned
-             * here. Otherwise, this will return a {@link ReadWriteEvent} for which {@link ReadWriteEvent#isNull()} returns <code>true</code>.
-             */
-            public final ReadWriteListener.ReadWriteEvent txnFailReason()
-            {
-                return m_txnFailReason;
-            }
-
-            private final ReadWriteListener.ReadWriteEvent m_txnFailReason;
-
-            /**
-             * Returns a chronologically-ordered list of all {@link ConnectionFailEvent} instances returned through
-             * {@link ConnectionFailListener#onEvent(ConnectionFailEvent)} since the first call to {@link BleDevice#connect()},
-             * including the current instance. Thus this list will always have at least a length of one (except if {@link #isNull()} is <code>true</code>).
-             * The list length is "reset" back to one whenever a {@link BleDeviceState#CONNECTING_OVERALL} operation completes, either
-             * through becoming {@link BleDeviceState#INITIALIZED}, or {@link BleDeviceState#DISCONNECTED} for good.
-             */
-            public final ConnectionFailEvent[] history()
-            {
-                if (isNull())
-                {
-                    return new ConnectionFailEvent[0];
-                }
-                // We want to clear out any event after this one to prevent memory leaks from occurring. This doesn't affect the "main"
-                // history, which is stored in P_ConnectionFailManager, so it's safe to do whatever we want to this list.
-                ArrayList<ConnectionFailEvent> history = m_device.m_connectionFailMngr.getHistory();
-                int position = history.indexOf(this);
-                if (position != -1)
-                {
-                    ConnectionFailEvent[] h = new ConnectionFailEvent[position + 1];
-                    for (int i = 0; i <= position; i++)
-                    {
-                        h[i] = history.get(i);
-                    }
-                    return h;
-                }
-                // If this event is not in the list, then this event must have been cached app-side. So, we simply return an array with this
-                // event in it.
-                ConnectionFailEvent[] h = { this };
-                return h;
-            }
-
-            ConnectionFailEvent(BleDevice device, Status reason, Timing timing, int failureCountSoFar, Interval latestAttemptTime, Interval totalAttemptTime, int gattStatus, BleDeviceState highestStateReached, BleDeviceState highestStateReached_total, AutoConnectUsage autoConnectUsage, int bondFailReason, ReadWriteListener.ReadWriteEvent txnFailReason)
-            {
-                super(failureCountSoFar, latestAttemptTime, totalAttemptTime, gattStatus, autoConnectUsage);
-
-                this.m_device = device;
-                this.m_status = reason;
-                this.m_timing = timing;
-                this.m_highestStateReached_latest = highestStateReached != null ? highestStateReached : BleDeviceState.NULL;
-                this.m_highestStateReached_total = highestStateReached_total != null ? highestStateReached_total : BleDeviceState.NULL;
-                this.m_bondFailReason = bondFailReason;
-                this.m_txnFailReason = txnFailReason;
-
-                m_device.getManager().ASSERT(highestStateReached != null, "highestState_latest shouldn't be null.");
-                m_device.getManager().ASSERT(highestStateReached_total != null, "highestState_total shouldn't be null.");
-            }
-
-            static ConnectionFailEvent NULL(BleDevice device)
-            {
-                return new ConnectionFailEvent(device, Status.NULL, Timing.NOT_APPLICABLE, 0, Interval.DISABLED, Interval.DISABLED, BleStatuses.GATT_STATUS_NOT_APPLICABLE, BleDeviceState.NULL, BleDeviceState.NULL, AutoConnectUsage.NOT_APPLICABLE, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, device.NULL_READWRITE_EVENT());
-            }
-
-            static ConnectionFailEvent EARLY_OUT(BleDevice device, Status reason)
-            {
-                return new ConnectionFailListener.ConnectionFailEvent(device, reason, Timing.TIMED_OUT, 0, Interval.ZERO, Interval.ZERO, BleStatuses.GATT_STATUS_NOT_APPLICABLE, BleDeviceState.NULL, BleDeviceState.NULL, AutoConnectUsage.NOT_APPLICABLE, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, device.NULL_READWRITE_EVENT());
-            }
-
-            /**
-             * Returns whether this {@link ConnectionFailEvent} instance is a "dummy" value. For now used for
-             * {@link BleNodeConfig.ReconnectFilter.ReconnectEvent#connectionFailEvent()} in certain situations.
-             */
-            @Override public final boolean isNull()
-            {
-                return status().isNull();
-            }
-
-            /**
-             * Forwards {@link BleDevice.ConnectionFailListener.Status#shouldBeReportedToUser()} using {@link #status()}.
-             */
-            public final boolean shouldBeReportedToUser()
-            {
-                return status().shouldBeReportedToUser();
-            }
-
-            @Override
-            public boolean equals(Object obj)
-            {
-                if (obj != null && obj instanceof ConnectionFailEvent)
-                {
-                    ConnectionFailEvent other = (ConnectionFailEvent) obj;
-                    return m_device.equals(other.m_device) && m_status == other.m_status && m_timing == other.m_timing && m_highestStateReached_latest == other.m_highestStateReached_latest
-                            && m_highestStateReached_total == other.m_highestStateReached_total && m_bondFailReason == other.m_bondFailReason && m_txnFailReason == other.m_txnFailReason
-                            && failureCountSoFar() == other.failureCountSoFar();
-                }
-                return false;
-            }
-
-            @Override public final String toString()
-            {
-                if (isNull())
-                {
-                    return Status.NULL.name();
-                }
-                else
-                {
-                    if (status() == Status.BONDING_FAILED)
-                    {
-                        return Utils_String.toString
-                                (
-                                        this.getClass(),
-                                        "device", device().getName_debug(),
-                                        "status", status(),
-                                        "timing", timing(),
-                                        "bondFailReason", device().getManager().getLogger().gattUnbondReason(bondFailReason()),
-                                        "failureCountSoFar", failureCountSoFar()
-                                );
-                    }
-                    else
-                    {
-                        return Utils_String.toString
-                                (
-                                        this.getClass(),
-                                        "device", device().getName_debug(),
-                                        "status", status(),
-                                        "timing", timing(),
-                                        "gattStatus", device().getManager().getLogger().gattStatus(gattStatus()),
-                                        "failureCountSoFar", failureCountSoFar()
-                                );
-                    }
-                }
-            }
-        }
-
-        /**
-         * Return value is ignored if device is either {@link BleDeviceState#RECONNECTING_LONG_TERM} or reason
-         * {@link Status#allowsRetry()} is <code>false</code>. If the device is {@link BleDeviceState#RECONNECTING_LONG_TERM}
-         * then authority is deferred to {@link BleNodeConfig.ReconnectFilter}.
-         * <br><br>
-         * Otherwise, this method offers a more convenient way of retrying a connection, as opposed to manually doing it yourself. It also lets
-         * the library handle things in a slightly more optimized/cleaner fashion and so is recommended for that reason also.
-         * <br><br>
-         * NOTE that this callback gets fired *after* {@link StateListener} lets you know that the device is {@link BleDeviceState#DISCONNECTED}.
-         * <br><br>
-         * The time parameters like {@link ConnectionFailEvent#attemptTime_latest()} are of optional use to you to decide if connecting again
-         * is worth it. For example if you've been trying to connect for 10 seconds already, chances are that another connection attempt probably won't work.
-         */
-        Please onEvent(final ConnectionFailEvent e);
-    }
-
-    /**
-     * Default implementation of {@link ConnectionFailListener} that attempts a certain number of retries. An instance of this class is set by default
-     * for all new {@link BleDevice} instances using {@link BleDevice.DefaultConnectionFailListener#DEFAULT_CONNECTION_FAIL_RETRY_COUNT}.
-     * Use {@link BleDevice#setListener_ConnectionFail(ConnectionFailListener)} to override the default behavior.
-     *
-     * @see ConnectionFailListener
-     * @see BleDevice#setListener_ConnectionFail(ConnectionFailListener)
-     */
-    @Immutable
-    public static class DefaultConnectionFailListener implements ConnectionFailListener
-    {
-        /**
-         * The default retry count provided to {@link DefaultConnectionFailListener}.
-         * So if you were to call {@link BleDevice#connect()} and all connections failed, in total the
-         * library would try to connect {@value #DEFAULT_CONNECTION_FAIL_RETRY_COUNT}+1 times.
-         *
-         * @see DefaultConnectionFailListener
-         */
-        public static final int DEFAULT_CONNECTION_FAIL_RETRY_COUNT = 2;
-
-        /**
-         * The default connection fail limit past which {@link DefaultConnectionFailListener} will start returning {@link BleNode.ConnectionFailListener.Please#retryWithAutoConnectTrue()}.
-         */
-        public static final int DEFAULT_FAIL_COUNT_BEFORE_USING_AUTOCONNECT = 2;
-
-        /**
-         * The maximum amount of time to keep trying if connection is failing due to (what usually are) transient bonding failures
-         */
-        public static final Interval MAX_RETRY_TIME_FOR_BOND_FAILURE = Interval.secs(120.0);
-
-        private final int m_retryCount;
-        private final int m_failCountBeforeUsingAutoConnect;
-
-        public DefaultConnectionFailListener()
-        {
-            this(DEFAULT_CONNECTION_FAIL_RETRY_COUNT, DEFAULT_FAIL_COUNT_BEFORE_USING_AUTOCONNECT);
-        }
-
-        public DefaultConnectionFailListener(int retryCount, int failCountBeforeUsingAutoConnect)
-        {
-            m_retryCount = retryCount;
-            m_failCountBeforeUsingAutoConnect = failCountBeforeUsingAutoConnect;
-        }
-
-        public final int getRetryCount()
-        {
-            return m_retryCount;
-        }
-
-        @Override public Please onEvent(ConnectionFailEvent e)
-        {
-            //--- DRK > Not necessary to check this ourselves, just being explicit.
-            if (!e.status().allowsRetry() || e.device().is(RECONNECTING_LONG_TERM))
-            {
-                return Please.doNotRetry();
-            }
-
-            //--- DRK > It has been noticed that bonding can fail several times due to the follow status code but then succeed,
-            //---		so we just keep on trying for a little bit in case we can eventually make it.
-            //---		NOTE: After testing for a little bit, this doesn't seem to work, regardless of how much time you give it.
-//			if( e.bondFailReason() == BleStatuses.UNBOND_REASON_REMOTE_DEVICE_DOWN )
-//			{
-//				final Interval timeNow = e.attemptTime_total();
-//				Interval timeSinceFirstUnbond = e.attemptTime_total();
-//				final ConnectionFailEvent[] history = e.history();
-//				for( int i = history.length-1; i >= 0; i-- )
-//				{
-//					final ConnectionFailEvent history_ith = history[i];
-//
-//					if( history_ith.bondFailReason() == BleStatuses.UNBOND_REASON_REMOTE_DEVICE_DOWN )
-//					{
-//						timeSinceFirstUnbond = history_ith.attemptTime_total();
-//					}
-//					else
-//					{
-//						break;
-//					}
-//				}
-//
-//				final Interval totalTimeFailingDueToBondingIssues = timeNow.minus(timeSinceFirstUnbond);
-//
-//				if( totalTimeFailingDueToBondingIssues.lt(MAX_RETRY_TIME_FOR_BOND_FAILURE) )
-//				{
-//					return Please.retry();
-//				}
-//			}
-
-            if (e.failureCountSoFar() <= m_retryCount)
-            {
-                if (e.failureCountSoFar() >= m_failCountBeforeUsingAutoConnect)
-                {
-                    return Please.retryWithAutoConnectTrue();
-                }
-                else
-                {
-                    if (e.status() == Status.NATIVE_CONNECTION_FAILED && e.timing() == Timing.TIMED_OUT)
-                    {
-                        if (e.autoConnectUsage() == AutoConnectUsage.USED)
-                        {
-                            return Please.retryWithAutoConnectFalse();
-                        }
-                        else if (e.autoConnectUsage() == AutoConnectUsage.NOT_USED)
-                        {
-                            return Please.retryWithAutoConnectTrue();
-                        }
-                        else
-                        {
-                            return Please.retry();
-                        }
-                    }
-                    else
-                    {
-                        return Please.retry();
-                    }
-                }
-            }
-            else
-            {
-                return Please.doNotRetry();
-            }
-        }
-    }
-
-    /**
-     * Pass an instance of this listener to {@link BleDevice#setListener_Bond(BondListener)} or {@link BleDevice#bond(BondListener)}.
-     */
-    @com.idevicesinc.sweetblue.annotations.Lambda
-    public static interface BondListener
-    {
-        /**
-         * Used on {@link BondEvent#status()} to roughly enumerate success or failure.
-         */
-        public static enum Status implements UsesCustomNull
-        {
-            /**
-             * Fulfills soft contract of {@link UsesCustomNull}.
-             *
-             * @see #isNull().
-             */
-            NULL,
-
-            /**
-             * The {@link BleDevice#bond()} call succeeded.
-             */
-            SUCCESS,
-
-            /**
-             * {@link BleDevice#bond(BondListener)} (or overloads) was called on {@link BleDevice#NULL}.
-             */
-            NULL_DEVICE,
-
-            /**
-             * Already {@link BleDeviceState#BONDED} or in the process of {@link BleDeviceState#BONDING}.
-             */
-            ALREADY_BONDING_OR_BONDED,
-
-            /**
-             * The call to {@link BluetoothDevice#createBond()} returned <code>false</code> and thus failed immediately.
-             */
-            FAILED_IMMEDIATELY,
-
-            /**
-             * We received a {@link BluetoothDevice#ACTION_BOND_STATE_CHANGED} through our internal {@link BroadcastReceiver} that we went from
-             * {@link BleDeviceState#BONDING} back to {@link BleDeviceState#UNBONDED}, which means the attempt failed.
-             * See {@link BondEvent#failReason()} for more information.
-             */
-            FAILED_EVENTUALLY,
-
-            /**
-             * The bond operation took longer than the time set in {@link BleDeviceConfig#taskTimeoutRequestFilter} so we cut it loose.
-             */
-            TIMED_OUT,
-
-            /**
-             * A call was made to {@link BleDevice#unbond()} at some point during the bonding process.
-             */
-            CANCELLED_FROM_UNBOND,
-
-            /**
-             * Cancelled from {@link BleManager} going {@link BleManagerState#TURNING_OFF} or
-             * {@link BleManagerState#OFF}, probably from calling {@link BleManager#reset()}.
-             */
-            CANCELLED_FROM_BLE_TURNING_OFF;
-
-            /**
-             * @return <code>true</code> for {@link #CANCELLED_FROM_BLE_TURNING_OFF} or {@link #CANCELLED_FROM_UNBOND}.
-             */
-            public final boolean wasCancelled()
-            {
-                return this == CANCELLED_FROM_BLE_TURNING_OFF || this == CANCELLED_FROM_UNBOND;
-            }
-
-            final boolean canFailConnection()
-            {
-                return this == FAILED_IMMEDIATELY || this == FAILED_EVENTUALLY || this == TIMED_OUT;
-            }
-
-            final ConnectionFailListener.Timing timing()
-            {
-                switch (this)
-                {
-                    case FAILED_IMMEDIATELY:
-                        return Timing.IMMEDIATELY;
-                    case FAILED_EVENTUALLY:
-                        return Timing.EVENTUALLY;
-                    case TIMED_OUT:
-                        return Timing.TIMED_OUT;
-                    default:
-                        return Timing.NOT_APPLICABLE;
-                }
-            }
-
-            /**
-             * @return <code>true</code> if <code>this</code> == {@link #NULL}.
-             */
-            @Override public final boolean isNull()
-            {
-                return this == NULL;
-            }
-        }
-
-        /**
-         * Struct passed to {@link BondListener#onEvent(BondEvent)} to provide more information about a {@link BleDevice#bond()} attempt.
-         */
-        @Immutable
-        public static class BondEvent extends Event implements UsesCustomNull
-        {
-            /**
-             * The {@link BleDevice} that attempted to {@link BleDevice#bond()}.
-             */
-            public final BleDevice device()
-            {
-                return m_device;
-            }
-
-            private final BleDevice m_device;
-
-            /**
-             * Convience to return the mac address of {@link #device()}.
-             */
-            public final String macAddress()
-            {
-                return m_device.getMacAddress();
-            }
-
-            /**
-             * The {@link Status} associated with this event.
-             */
-            public final Status status()
-            {
-                return m_status;
-            }
-
-            private final Status m_status;
-
-            /**
-             * If {@link #status()} is {@link BondListener.Status#FAILED_EVENTUALLY}, this integer will
-             * be one of the values enumerated in {@link BluetoothDevice} that start with <code>UNBOND_REASON</code> such as
-             * {@link BleStatuses#UNBOND_REASON_AUTH_FAILED}. Otherwise it will be equal to {@link BleStatuses#BOND_FAIL_REASON_NOT_APPLICABLE}.
-             * See also a publically accessible list in {@link BleStatuses}.
-             */
-            public final int failReason()
-            {
-                return m_failReason;
-            }
-
-            private final int m_failReason;
-
-            /**
-             * Tells whether the bond was created through an explicit call through SweetBlue, or otherwise. If
-             * {@link ChangeIntent#INTENTIONAL}, then {@link BleDevice#bond()} (or overloads) were called. If {@link ChangeIntent#UNINTENTIONAL},
-             * then the bond was created "spontaneously" as far as SweetBlue is concerned, whether through another app, the OS Bluetooth
-             * settings, or maybe from a request by the remote BLE device itself.
-             */
-            public final State.ChangeIntent intent()
-            {
-                return m_intent;
-            }
-
-            private final State.ChangeIntent m_intent;
-
-            BondEvent(BleDevice device, Status status, int failReason, State.ChangeIntent intent)
-            {
-                m_device = device;
-                m_status = status;
-                m_failReason = failReason;
-                m_intent = intent;
-            }
-
-            private static BondEvent NULL(final BleDevice device)
-            {
-                return new BondEvent(device, Status.NULL, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, State.ChangeIntent.NULL);
-            }
-
-            /**
-             * Shortcut for checking if {@link #status()} == {@link BondListener.Status#SUCCESS}.
-             */
-            public final boolean wasSuccess()
-            {
-                return status() == Status.SUCCESS;
-            }
-
-            /**
-             * Forwards {@link Status#wasCancelled()}.
-             */
-            public final boolean wasCancelled()
-            {
-                return status().wasCancelled();
-            }
-
-            @Override public final String toString()
-            {
-                if (isNull())
-                {
-                    return NULL_STRING();
-                }
-                else
-                {
-                    return Utils_String.toString
-                            (
-                                    this.getClass(),
-                                    "device", device().getName_debug(),
-                                    "status", status(),
-                                    "failReason", device().getManager().getLogger().gattUnbondReason(failReason()),
-                                    "intent", intent()
-                            );
-                }
-            }
-
-            @Override public final boolean isNull()
-            {
-                return status().isNull();
-            }
-        }
-
-        /**
-         * Called after a call to {@link BleDevice#bond(BondListener)} (or overloads),
-         * or when bonding through another app or the operating system settings.
-         */
-        void onEvent(BondEvent e);
-    }
-
-    static ConnectionFailListener DEFAULT_CONNECTION_FAIL_LISTENER = new DefaultConnectionFailListener();
+    static DeviceReconnectFilter DEFAULT_CONNECTION_FAIL_LISTENER = new DefaultDeviceReconnectFilter();
 
     final P_NativeDeviceWrapper m_nativeWrapper;
 
@@ -1860,15 +108,18 @@ public final class BleDevice extends BleNode
     final P_TransactionManager m_txnMngr;
     private final P_ReconnectManager m_reconnectMngr_longTerm;
     private final P_ReconnectManager m_reconnectMngr_shortTerm;
-    private final P_ConnectionFailManager m_connectionFailMngr;
+    final P_ConnectionFailManager m_connectionFailMngr;
     private final P_RssiPollManager m_rssiPollMngr;
     private final P_RssiPollManager m_rssiPollMngr_auto;
     private final P_Task_Disconnect m_dummyDisconnectTask;
     private final P_HistoricalDataManager m_historicalDataMngr;
     final P_BondManager m_bondMngr;
 
-    private com.idevicesinc.sweetblue.ReadWriteListener m_defaultReadWriteListener = null;
-    private NotificationListener m_defaultNotificationListener = null;
+    private final Stack<ReadWriteListener> m_readWriteListenerStack;
+    private final Stack<NotificationListener> m_notificationListenerStack;
+    private final Stack<DeviceConnectListener> m_connectListenerStack;
+    WeakReference<DeviceConnectListener> m_ephemeralConnectListener;
+
 
     private TimeEstimator m_writeTimeEstimator;
     private TimeEstimator m_readTimeEstimator;
@@ -1899,7 +150,7 @@ public final class BleDevice extends BleNode
 
     private BondListener.BondEvent m_nullBondEvent = null;
     private ReadWriteListener.ReadWriteEvent m_nullReadWriteEvent = null;
-    private ConnectionFailListener.ConnectionFailEvent m_nullConnectionFailEvent = null;
+    private ConnectFailEvent m_nullConnectionFailEvent = null;
 
     private final boolean m_isNull;
 
@@ -1912,6 +163,10 @@ public final class BleDevice extends BleNode
         m_origin = origin;
         m_origin_latest = m_origin;
         m_isNull = isNull;
+
+        m_readWriteListenerStack = new Stack<>();
+        m_notificationListenerStack = new Stack<>();
+        m_connectListenerStack = new Stack<>();
 
         m_deviceLayer = device_native;
 
@@ -1956,13 +211,14 @@ public final class BleDevice extends BleNode
             m_dummyDisconnectTask = new P_Task_Disconnect(this, null, /*explicit=*/false, PE_TaskPriority.FOR_EXPLICIT_BONDING_AND_CONNECTING, /*cancellable=*/true);
             m_historicalDataMngr = new P_HistoricalDataManager(this, getMacAddress());
             m_reliableWriteMngr = new P_ReliableWriteManager(this);
-            stateTracker().set(E_Intent.UNINTENTIONAL, BleStatuses.GATT_STATUS_NOT_APPLICABLE, BleDeviceState.UNDISCOVERED, true, BleDeviceState.DISCONNECTED, true, m_bondMngr.getNativeBondingStateOverrides());
+            final Object[] bondStates = m_bondMngr.getNativeBondingStateOverrides();
+            stateTracker().set(E_Intent.UNINTENTIONAL, BleStatuses.GATT_STATUS_NOT_APPLICABLE, UNDISCOVERED, true, BleDeviceState.DISCONNECTED, true, bondStates);
         }
     }
 
     /**
      * Wrapper for {@link BluetoothGatt#beginReliableWrite()} - will return an event such that {@link ReadWriteEvent#isNull()} will
-     * return <code>false</code> if there are no problems. After calling this you should do a few {@link BleDevice#write(UUID, byte[])}
+     * return <code>false</code> if there are no problems. After calling this you should do your {@link BleDevice#write(UUID, byte[])}
      * calls then call {@link #reliableWrite_execute()}.
      */
     public final @Nullable(Prevalence.NEVER) ReadWriteEvent reliableWrite_begin(final ReadWriteListener listener)
@@ -1989,6 +245,14 @@ public final class BleDevice extends BleNode
     {
 
         return m_reliableWriteMngr.execute();
+    }
+
+    /**
+     * Returns a string of all the states this {@link BleDevice} is currently in.
+     */
+    public final String printState()
+    {
+        return stateTracker_main().toString();
     }
 
     @Override protected final PA_ServiceManager newServiceManager()
@@ -2132,7 +396,7 @@ public final class BleDevice extends BleNode
      * How the device was originally created, either from scanning or explicit creation.
      * <br><br>
      * NOTE: That devices for which this returns {@link BleDeviceOrigin#EXPLICIT} may still be
-     * {@link BleManager.DiscoveryListener.LifeCycle#REDISCOVERED} through {@link BleManager#startScan()}.
+     * {@link DiscoveryListener.LifeCycle#REDISCOVERED} through {@link BleManager#startScan()}.
      */
     public final BleDeviceOrigin getOrigin()
     {
@@ -2140,10 +404,10 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Returns the last time the device was {@link BleManager.DiscoveryListener.LifeCycle#DISCOVERED}
-     * or {@link BleManager.DiscoveryListener.LifeCycle#REDISCOVERED}. If {@link #getOrigin()} returns
+     * Returns the last time the device was {@link DiscoveryListener.LifeCycle#DISCOVERED}
+     * or {@link DiscoveryListener.LifeCycle#REDISCOVERED}. If {@link #getOrigin()} returns
      * {@link BleDeviceOrigin#EXPLICIT} then this will return {@link EpochTime#NULL} unless or until
-     * the device is {@link BleManager.DiscoveryListener.LifeCycle#REDISCOVERED}.
+     * the device is {@link DiscoveryListener.LifeCycle#REDISCOVERED}.
      */
     public final EpochTime getLastDiscoveryTime()
     {
@@ -2180,78 +444,154 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Set a listener here to be notified whenever this device's state changes.
+     * Set a listener here to be notified whenever this device's state changes. NOTE: This will clear the stack of {@link DeviceStateListener}s, and set
+     * the one provided here to be the only one in the stack.
      *
-     * @deprecated - This will be removed in version 3. It has been refactored to {@link DeviceStateListener}.
-     */
-    public final void setListener_State(@Nullable(Prevalence.NORMAL) final StateListener listener_nullable)
-    {
-        if (isNull()) return;
-
-        if (listener_nullable == null)
-        {
-            stateTracker_main().setListener(null);
-        }
-        else
-        {
-            stateTracker_main().setListener(wrapListener(listener_nullable));
-        }
-    }
-
-    // TODO - Remove this for version 3, as it won't be needed anymore
-    private DeviceStateListener wrapListener(final StateListener listener)
-    {
-        return new DeviceStateListener()
-        {
-            @Override public void onEvent(StateListener.StateEvent e)
-            {
-                if (listener != null)
-                {
-                    listener.onEvent(e);
-                }
-            }
-        };
-    }
-
-    private DeviceStateListener wrapListenerAllowNull(final StateListener listener)
-    {
-        if (listener == null)
-        {
-            return null;
-        }
-        else
-        {
-            return wrapListener(listener);
-        }
-    }
-
-    /**
-     * Set a listener here to be notified whenever this device's state changes.
+     * If the provided listener is <code>null</code>, then the stack of listeners will be cleared.
      */
     public final void setListener_State(@Nullable(Prevalence.NORMAL) DeviceStateListener listener_nullable)
     {
         if (isNull()) return;
 
-        stateTracker_main().setListener(listener_nullable);
+        stateTracker_main().clearListenerStack();
+        if (listener_nullable != null)
+            stateTracker_main().setListener(listener_nullable);
     }
 
     /**
-     * Returns the {@link DeviceStateListener} this device currently using.
+     * Push a new {@link DeviceStateListener} onto the stack. This new listener will be the one events are dispatched to, until
+     * {@link #popListener_State()} is called.
+     * This method will early-out if the provided listener is <code>null</code>
      */
-    public final DeviceStateListener getStateListener()
+    public final void pushListener_State(@Nullable(Prevalence.NEVER) DeviceStateListener listener)
+    {
+        if (isNull()) return;
+
+        if (listener == null) return;
+
+        stateTracker_main().pushListener(listener);
+    }
+
+    /**
+     * Pop the current {@link DeviceStateListener} out of the stack of listeners.
+     * Returns <code>true</code> if a listener was actually removed from the stack (it will only be false if the stack is already empty).
+     */
+    public final boolean popListener_State()
+    {
+        if (isNull()) return false;
+
+        return stateTracker_main().popListener();
+    }
+
+    /**
+     * Returns the current {@link DeviceStateListener} being used (the top of the stack). This can return <code>null</code> if there
+     * are no listeners in the stack.
+     */
+    public final @Nullable(Prevalence.NORMAL) DeviceStateListener getListener_State()
     {
         return stateTracker_main().getListener();
     }
 
     /**
-     * Set a listener here to be notified whenever a connection fails and to
-     * have control over retry behavior.
+     * Set a listener here to be notified whenever this device connects, or gets disconnected. NOTE: This will clear the stack of {@link DeviceStateListener}s, and set
+     * the one provided here to be the only one in the stack.
+     *
+     * If the provided listener is <code>null</code>, then the stack of listeners will be cleared.
      */
-    public final void setListener_ConnectionFail(@Nullable(Prevalence.NORMAL) ConnectionFailListener listener_nullable)
+    public final void setListener_Connect(@Nullable(Prevalence.NORMAL) DeviceConnectListener listener)
     {
         if (isNull()) return;
 
-        m_connectionFailMngr.setListener(listener_nullable);
+        m_connectListenerStack.clear();
+        if (listener != null)
+            m_connectListenerStack.push(listener);
+    }
+
+    /**
+     * Push a new {@link DeviceConnectListener} onto the stack. This new listener will be the one events are dispatched to, until
+     * {@link #popListener_State()} is called.
+     * This method will early-out if the provided listener is <code>null</code>
+     */
+    public final void pushListener_Connect(@Nullable(Prevalence.NEVER) DeviceConnectListener listener)
+    {
+        if (isNull()) return;
+
+        if (listener == null) return;
+
+        m_connectListenerStack.push(listener);
+    }
+
+    /**
+     * Pop the current {@link DeviceConnectListener} out of the stack of listeners.
+     * Returns <code>true</code> if a listener was actually removed from the stack (it will only be false if the stack is already empty).
+     */
+    public final boolean popListener_Connect()
+    {
+        if (isNull()) return false;
+
+        if (m_connectListenerStack.empty()) return false;
+
+        m_connectListenerStack.pop();
+
+        return true;
+    }
+
+    /**
+     * Returns the current {@link DeviceConnectListener} being used (the top of the stack). This can return <code>null</code> if there
+     * are no listeners in the stack.
+     */
+    public final @Nullable(Prevalence.NORMAL) DeviceConnectListener getListener_Connect()
+    {
+        if (m_connectListenerStack.empty()) return null;
+
+        return m_connectListenerStack.peek();
+    }
+
+    /**
+     * Set a listener here to be notified whenever a connection fails and to
+     * have control over retry behavior. NOTE: This will clear the stack of {@link DeviceReconnectFilter}s, and set
+     * the one provided here to be the only one in the stack. If the provided listener is <code>null</code>, then the stack of listeners will be cleared.
+     */
+    public final void setListener_Reconnect(@Nullable(Prevalence.NORMAL) DeviceReconnectFilter listener_nullable)
+    {
+        if (isNull()) return;
+
+        m_connectionFailMngr.clearListenerStack();
+        if (listener_nullable != null)
+            m_connectionFailMngr.setListener(listener_nullable);
+    }
+
+    /**
+     * Pushes the provided {@link DeviceReconnectFilter} on to the top of the stack of listeners.
+     * This method will early-out if the provided listener is <code>null</code>
+     */
+    public final void pushListener_ConnectionFail(@Nullable(Prevalence.NEVER) DeviceReconnectFilter listener)
+    {
+        if (isNull()) return;
+
+        if (listener == null) return;
+
+        m_connectionFailMngr.pushListener(listener);
+    }
+
+    /**
+     * Pops the current {@link DeviceReconnectFilter} off the stack of listeners.
+     * Returns <code>true</code> if a listener was actually removed from the stack (it will only be false if the stack is already empty).
+     */
+    public final boolean popListener_ConnectionFail()
+    {
+        if (isNull()) return false;
+
+        return m_connectionFailMngr.popListener();
+    }
+
+    /**
+     * Returns the current {@link DeviceReconnectFilter} being used (the top of the stack). This can return <code>null</code> if there
+     * are no listeners in the stack.
+     */
+    public final @Nullable(Prevalence.NORMAL) DeviceReconnectFilter getListener_ConnectionFail()
+    {
+        return m_connectionFailMngr.getListener();
     }
 
     /**
@@ -2269,58 +609,113 @@ public final class BleDevice extends BleNode
     /**
      * Sets a default backup {@link ReadWriteListener} that will be called for all calls to {@link #read(UUID, ReadWriteListener)},
      * {@link #write(UUID, byte[], ReadWriteListener)}, {@link #enableNotify(UUID, ReadWriteListener)}, etc.
-     * <br><br>
-     * NOTE: This will be called after the {@link ReadWriteListener} provided directly through the method params.
-     *
-     * @deprecated - This will be removed in version 3. Use {@link com.idevicesinc.sweetblue.ReadWriteListener} instead (it was refactored to be in it's own class file, rather than an inner class).
+     * NOTE: This will clear the stack of {@link ReadWriteListener}s, and set
+     * the one provided here to be the only one in the stack. If the provided listener is <code>null</code>, then the stack of listeners will be cleared.
      */
     public final void setListener_ReadWrite(@Nullable(Prevalence.NORMAL) final ReadWriteListener listener_nullable)
     {
         if (isNull()) return;
 
-        if (listener_nullable == null)
-        {
-            m_defaultReadWriteListener = null;
-        }
-        else
-        {
-            m_defaultReadWriteListener = new com.idevicesinc.sweetblue.ReadWriteListener()
-            {
-                @Override public void onEvent(ReadWriteEvent e)
-                {
-                    if (listener_nullable != null)
-                    {
-                        listener_nullable.onEvent(e);
-                    }
-                }
-            };
-        }
+        m_readWriteListenerStack.clear();
+
+        if (listener_nullable != null)
+            m_readWriteListenerStack.push(listener_nullable);
     }
 
-
     /**
-     * Sets a default backup {@link ReadWriteListener} that will be called for all calls to {@link #read(UUID, ReadWriteListener)},
-     * {@link #write(UUID, byte[], ReadWriteListener)}, {@link #enableNotify(UUID, ReadWriteListener)}, etc.
-     * <br><br>
-     * NOTE: This will be called after the {@link ReadWriteListener} provided directly through the method params.
+     * Pushes the provided {@link ReadWriteListener} on to the top of the stack of listeners.
+     * This method will early-out if the provided listener is <code>null</code>
      */
-    public final void setListener_ReadWrite(@Nullable(Prevalence.NORMAL) com.idevicesinc.sweetblue.ReadWriteListener listener_nullable)
+    public final void pushListener_ReadWrite(@Nullable(Prevalence.NEVER) ReadWriteListener listener)
     {
         if (isNull()) return;
 
-        m_defaultReadWriteListener = listener_nullable;
+        if (listener == null) return;
+
+        m_readWriteListenerStack.push(listener);
     }
+
+    /**
+     * Pops the current {@link ReadWriteListener} off the stack of listeners.
+     * Returns <code>true</code> if a listener was actually removed from the stack (it will only be false if the stack is already empty).
+     */
+    public final boolean popListener_ReadWrite()
+    {
+        if (isNull()) return false;
+
+        if (m_readWriteListenerStack.empty())
+            return false;
+
+        m_readWriteListenerStack.pop();
+        return true;
+    }
+
+    /**
+     * Returns the current {@link ReadWriteListener} being used (the top of the stack). This can return <code>null</code> if there
+     * are no listeners in the stack.
+     */
+    public final @Nullable(Prevalence.NORMAL) ReadWriteListener getListener_ReadWrite()
+    {
+        if (isNull() || m_readWriteListenerStack.empty())
+            return null;
+        return m_readWriteListenerStack.peek();
+    }
+
 
     /**
      * Sets a default {@link NotificationListener} that will be called when receiving notifications, or indications. This listener will also
      * be called when toggling notifications. This does NOT replace {@link com.idevicesinc.sweetblue.ReadWriteListener}, just adds to it. If
      * a default {@link com.idevicesinc.sweetblue.ReadWriteListener} has been set, it will still fire in addition to this listener.
+     * NOTE: This will clear the stack of {@link ReadWriteListener}s, and set
+     * the one provided here to be the only one in the stack. If the provided listener is <code>null</code>, then the stack of listeners will be cleared.
      */
     public final void setListener_Notification(@Nullable(Prevalence.NORMAL) NotificationListener listener_nullable)
     {
         if (isNull()) return;
 
-        m_defaultNotificationListener = listener_nullable;
+        m_notificationListenerStack.clear();
+
+        if (listener_nullable != null)
+            m_notificationListenerStack.push(listener_nullable);
+    }
+
+    /**
+     * Pushes the provided {@link NotificationListener} on to the top of the stack of listeners.
+     * This method will early-out if the provided listener is <code>null</code>
+     */
+    public final void pushListener_Notification(@Nullable(Prevalence.NEVER) NotificationListener listener)
+    {
+        if (isNull()) return;
+
+        if (listener == null) return;
+
+        m_notificationListenerStack.push(listener);
+    }
+
+    /**
+     * Pops the current {@link NotificationListener} off the stack of listeners.
+     * Returns <code>true</code> if a listener was actually removed from the stack (it will only be false if the stack is already empty).
+     */
+    public final boolean popListener_Notification()
+    {
+        if (isNull()) return false;
+
+        if (m_notificationListenerStack.empty())
+            return false;
+
+        m_notificationListenerStack.pop();
+        return true;
+    }
+
+    /**
+     * Returns the current {@link NotificationListener} being used (the top of the stack). This can return <code>null</code> if there
+     * are no listeners in the stack.
+     */
+    public final @Nullable(Prevalence.NORMAL) NotificationListener getListener_Notification()
+    {
+        if (isNull() || m_notificationListenerStack.empty()) return null;
+
+        return m_notificationListenerStack.peek();
     }
 
     /**
@@ -2336,8 +731,8 @@ public final class BleDevice extends BleNode
 
     /**
      * Returns the connection failure retry count during a retry loop. Basic example use case is to provide a callback to
-     * {@link #setListener_ConnectionFail(ConnectionFailListener)} and update your application's UI with this method's return value downstream of your
-     * {@link ConnectionFailListener#onEvent(BleDevice.ConnectionFailListener.ConnectionFailEvent)} override.
+     * {@link #setListener_Reconnect(DeviceReconnectFilter)} and update your application's UI with this method's return value downstream of your
+     * {@link DeviceReconnectFilter#onConnectFailed(ReconnectFilter.ConnectFailEvent)} override.
      */
     public final int getConnectionRetryCount()
     {
@@ -2478,7 +873,15 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Returns the advertising flags, if any, parse from {@link #getScanRecord()}.
+     * Returns the {@link BleScanInfo} instance held by this {@link BleDevice}.
+     */
+    public final @Nullable(Prevalence.NEVER) BleScanInfo getScanInfo()
+    {
+        return m_scanInfo;
+    }
+
+    /**
+     * Returns the advertising flags, if any, parsed from {@link #getScanRecord()}.
      */
     public final int getAdvertisingFlags()
     {
@@ -2643,7 +1046,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Returns the cached data from the lastest successful read or notify received for a given uuid.
+     * Returns the cached data from the latest successful read or notify received for a given uuid.
      * Basically if you receive a {@link ReadWriteListener.ReadWriteEvent} for which {@link ReadWriteListener.ReadWriteEvent#isRead()}
      * and {@link ReadWriteListener.ReadWriteEvent#wasSuccess()} both return <code>true</code> then {@link ReadWriteListener.ReadWriteEvent#data()},
      * will be cached and is retrievable by this method.
@@ -3122,7 +1525,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Same as {@link #setName(String, UUID, BleDevice.ReadWriteListener)} but will not attempt to propagate the
+     * Same as {@link #setName(String, UUID, ReadWriteListener)} but will not attempt to propagate the
      * name change to the remote device. Only {@link #getName_override()} will be affected by this.
      */
     public final void setName(final String name)
@@ -3131,7 +1534,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Same as {@link #setName(String, UUID, BleDevice.ReadWriteListener)} but you can use this
+     * Same as {@link #setName(String, UUID, ReadWriteListener)} but you can use this
      * if you don't care much whether the device name change actually successfully reaches
      * the remote device. The write will be attempted regardless.
      */
@@ -3141,7 +1544,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Sets the local name of the device and also attempts a {@link #write(java.util.UUID, byte[], BleDevice.ReadWriteListener)}
+     * Sets the local name of the device and also attempts a {@link #write(java.util.UUID, byte[], ReadWriteListener)}
      * using the given {@link UUID}. Further calls to {@link #getName_override()} will immediately reflect the name given here.
      * Further calls to {@link #getName_native()}, {@link #getName_debug()} and {@link #getName_normalized()} will only reflect
      * the name given here if the write is successful. It is somewhat assumed that doing this write will cause the remote device
@@ -3282,14 +1685,14 @@ public final class BleDevice extends BleNode
     /**
      * Same as {@link #bond()} but you can pass a listener to be notified of the details behind success or failure.
      *
-     * @return (same as {@link #bond()}).
+     * @return same as {@link #bond()}.
      */
     public final @Nullable(Prevalence.NEVER) BondListener.BondEvent bond(BondListener listener)
     {
-        return bond_private(/*isDirect=*/true, listener);
+        return bond_private(/*isDirect=*/true, true, listener);
     }
 
-    final BondEvent bond_private(boolean isDirect, BondListener listener)
+    final BondListener.BondEvent bond_private(boolean isDirect, boolean userCalled, BondListener listener)
     {
         if (listener != null)
         {
@@ -3310,7 +1713,10 @@ public final class BleDevice extends BleNode
             return event;
         }
 
-        m_bondMngr.resetBondRetryCount();
+        if (userCalled)
+        {
+            m_bondMngr.resetBondRetryCount();
+        }
 
         bond_justAddTheTask(E_TransactionLockBehavior.PASSES, isDirect);
 
@@ -3329,7 +1735,7 @@ public final class BleDevice extends BleNode
      * BLE so take it with a grain of salt because it has been directly observed
      * by us to degrade stability in some cases as well.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
      * @see #unbond()
      */
     public final @Nullable(Prevalence.NEVER) BondListener.BondEvent bond()
@@ -3354,54 +1760,26 @@ public final class BleDevice extends BleNode
 
     /**
      * Starts a connection process, or does nothing if already {@link BleDeviceState#CONNECTED} or {@link BleDeviceState#CONNECTING}.
-     * Use {@link #setListener_ConnectionFail(ConnectionFailListener)} and {@link #setListener_State(StateListener)} to receive callbacks for
+     * Use {@link #setListener_Reconnect(DeviceReconnectFilter)} and {@link #setListener_State(DeviceStateListener)} to receive callbacks for
      * progress and errors.
      *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
      */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect()
+    public final @Nullable(Prevalence.NEVER) ConnectFailEvent connect()
     {
-        return connect((StateListener) null);
+        return connect(null, null);
     }
 
     /**
-     * Same as {@link #connect()} but calls {@link #setListener_State(StateListener)} for you.
+     * Starts a connection process, or does nothing if already {@link BleDeviceState#CONNECTED} or {@link BleDeviceState#CONNECTING}.
+     * Use {@link #setListener_Reconnect(DeviceReconnectFilter)} and {@link #setListener_State(DeviceStateListener)} to receive callbacks for more
+     * thorough progress and errors.
      *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
      */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(StateListener stateListener)
+    public final @Nullable(Prevalence.NEVER) ConnectFailEvent connect(DeviceConnectListener connectListener)
     {
-        return connect(stateListener, null);
-    }
-
-    /**
-     * Same as {@link #connect()} but calls {@link #setListener_ConnectionFail(ConnectionFailListener)} for you.
-     *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(ConnectionFailListener failListener)
-    {
-        return connect((StateListener) null, failListener);
-    }
-
-    /**
-     * Same as {@link #connect()} but calls {@link #setListener_State(StateListener)} and
-     * {@link #setListener_ConnectionFail(ConnectionFailListener)} for you.
-     *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(StateListener stateListener, ConnectionFailListener failListener)
-    {
-        return connect(null, null, wrapListenerAllowNull(stateListener), failListener);
-    }
-
-    /**
-     * Same as {@link #connect(BleDevice.StateListener, BleDevice.ConnectionFailListener)}
-     * with reversed arguments.
-     */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(ConnectionFailListener failListener, StateListener stateListener)
-    {
-        return connect(stateListener, failListener);
+        return connect(null, null, connectListener);
     }
 
     /**
@@ -3410,36 +1788,14 @@ public final class BleDevice extends BleNode
      * for your device than you ;-). Usually the characteristics read/written inside this transaction are encrypted and so one way or another will require
      * the device to become {@link BleDeviceState#BONDED}. This should happen automatically for you, i.e you shouldn't need to call {@link #bond()} yourself.
      *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
      * @see #connect()
      * @see BleDeviceState#AUTHENTICATING
      * @see BleDeviceState#AUTHENTICATED
      */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(BleTransaction.Auth authenticationTxn)
+    public final @Nullable(Prevalence.NEVER) ConnectFailEvent connect(BleTransaction.Auth authenticationTxn)
     {
-        return connect(authenticationTxn, (StateListener) null);
-    }
-
-    /**
-     * Same as {@link #connect(BleTransaction.Auth)} but calls {@link #setListener_State(StateListener)} for you.
-     *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(BleTransaction.Auth authenticationTxn, StateListener stateListener)
-    {
-        return connect(authenticationTxn, stateListener, (ConnectionFailListener) null);
-    }
-
-    /**
-     * Same as {@link #connect(BleTransaction.Auth)} but calls
-     * {@link #setListener_State(StateListener)} and
-     * {@link #setListener_ConnectionFail(ConnectionFailListener)} for you.
-     *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(BleTransaction.Auth authenticationTxn, StateListener stateListener, ConnectionFailListener failListener)
-    {
-        return connect(authenticationTxn, null, wrapListenerAllowNull(stateListener), failListener);
+        return connect(authenticationTxn, null);
     }
 
     /**
@@ -3447,98 +1803,51 @@ public final class BleDevice extends BleNode
      * {@link BleDeviceState#INITIALIZED}. For example if you had a BLE-enabled thermometer you could use this transaction to attempt an initial
      * temperature read before updating your UI to indicate "full" connection success, even though BLE connection itself already succeeded.
      *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
      * @see #connect()
      * @see BleDeviceState#INITIALIZING
      * @see BleDeviceState#INITIALIZED
      */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(BleTransaction.Init initTxn)
+    public final @Nullable(Prevalence.NEVER) ConnectFailEvent connect(BleTransaction.Init initTxn)
     {
-        return connect(initTxn, (StateListener) null);
-    }
-
-    /**
-     * Same as {@link #connect(BleTransaction.Init)} but calls {@link #setListener_State(StateListener)} for you.
-     *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(BleTransaction.Init initTxn, StateListener stateListener)
-    {
-        return connect(initTxn, stateListener, (ConnectionFailListener) null);
-    }
-
-    /**
-     * Yet another overload.
-     *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(BleTransaction.Auth authTxn, ConnectionFailListener connectionFailListener)
-    {
-        return connect(authTxn, (StateListener) null, connectionFailListener);
-    }
-
-    /**
-     * Same as {@link #connect(BleTransaction.Init)} but calls {@link #setListener_State(StateListener)} and
-     * {@link #setListener_ConnectionFail(ConnectionFailListener)} for you.
-     *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(BleTransaction.Init initTxn, StateListener stateListener, ConnectionFailListener failListener)
-    {
-        return connect(null, initTxn, wrapListenerAllowNull(stateListener), failListener);
+        return connect(null, initTxn);
     }
 
     /**
      * Combination of {@link #connect(BleTransaction.Auth)} and {@link #connect(BleTransaction.Init)}. See those two methods for explanation.
      *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
      * @see #connect()
      * @see #connect(BleTransaction.Auth)
      * @see #connect(BleTransaction.Init)
      */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(BleTransaction.Auth authenticationTxn, BleTransaction.Init initTxn)
+    public final @Nullable(Prevalence.NEVER) ConnectFailEvent connect(BleTransaction.Auth authenticationTxn, BleTransaction.Init initTxn)
     {
-        return connect(authenticationTxn, initTxn, null, (ConnectionFailListener) null);
+        return connect(authenticationTxn, initTxn, null);
     }
 
     /**
-     * Same as {@link #connect(BleTransaction.Auth, BleTransaction.Init)} but calls {@link #setListener_State(StateListener)} for you.
+     * Same as {@link #connect(BleTransaction.Auth, BleTransaction.Init)} but calls {@link #setListener_State(DeviceStateListener)} and
+     * {@link #setListener_Reconnect(DeviceReconnectFilter)} for you.
      *
-     * @return (same as {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(BleTransaction.Auth authenticationTxn, BleTransaction.Init initTxn, StateListener stateListener)
-    {
-        return connect(authenticationTxn, initTxn, wrapListenerAllowNull(stateListener), (ConnectionFailListener) null);
-    }
-
-    /**
-     * Same as {@link #connect(BleTransaction.Auth, BleTransaction.Init)} but calls {@link #setListener_State(StateListener)} and
-     * {@link #setListener_ConnectionFail(ConnectionFailListener)} for you.
-     *
-     * @return If the attempt could not even "leave the gate" for some resaon, a valid {@link ConnectionFailEvent} is returned telling you why. Otherwise
-     * this method will still return a non-null instance but {@link ConnectionFailEvent#isNull()} will be <code>true</code>.
+     * @return If the attempt could not even "leave the gate" for some reason, a valid {@link ConnectFailEvent} is returned telling you why. Otherwise
+     * this method will still return a non-null instance but {@link ConnectFailEvent#isNull()} will be <code>true</code>.
      * <br><br>
-     * NOTE: your {@link ConnectionFailListener} will still be called even if this method early-outs.
+     * NOTE: your {@link DeviceReconnectFilter} will still be called even if this method early-outs.
      * <br><br>
      * TIP:	You can use the return value as an optimization. Many apps will call this method (or its overloads) and throw up a spinner until receiving a
-     * callback to {@link ConnectionFailListener}. However if {@link ConnectionFailEvent#isNull()} for the return value is <code>false</code>, meaning
+     * callback to {@link DeviceReconnectFilter}. However if {@link ConnectFailEvent#isNull()} for the return value is <code>false</code>, meaning
      * the connection attempt couldn't even start for some reason, then you don't have to throw up the spinner in the first place.
      */
-    public final @Nullable(Prevalence.NEVER) ConnectionFailListener.ConnectionFailEvent connect(BleTransaction.Auth authenticationTxn, BleTransaction.Init initTxn, DeviceStateListener stateListener, ConnectionFailListener failListener)
+    public final @Nullable(Prevalence.NEVER) ConnectFailEvent connect(BleTransaction.Auth authenticationTxn, BleTransaction.Init initTxn, DeviceConnectListener connectionListener)
     {
-        if (stateListener != null)
-        {
-            setListener_State(stateListener);
-        }
 
-        if (failListener != null)
-        {
-            setListener_ConnectionFail(failListener);
-        }
+        if (connectionListener != null)
+            m_ephemeralConnectListener = new WeakReference<>(connectionListener);
 
         m_connectionFailMngr.onExplicitConnectionStarted();
 
-        final ConnectionFailListener.ConnectionFailEvent info_earlyOut = connect_earlyOut();
+        final ConnectFailEvent info_earlyOut = connect_earlyOut();
 
         if (info_earlyOut != null) return info_earlyOut;
 
@@ -3549,7 +1858,7 @@ public final class BleDevice extends BleNode
             //--- DRK > Making a judgement call that an explicit connect call here means we bail out of the long term reconnect state.
             stateTracker_main().remove(RECONNECTING_LONG_TERM, E_Intent.INTENTIONAL, BleStatuses.GATT_STATUS_NOT_APPLICABLE);
 
-            final ConnectionFailListener.ConnectionFailEvent info_alreadyConnected = ConnectionFailListener.ConnectionFailEvent.EARLY_OUT(this, Status.ALREADY_CONNECTING_OR_CONNECTED);
+            final ConnectFailEvent info_alreadyConnected = ConnectFailEvent.EARLY_OUT(this, Status.ALREADY_CONNECTING_OR_CONNECTED);
 
             m_connectionFailMngr.invokeCallback(info_alreadyConnected);
 
@@ -3568,11 +1877,16 @@ public final class BleDevice extends BleNode
      *
      * @return <code>true</code> if this call "had an effect", such as if the device was previously {@link BleDeviceState#RECONNECTING_LONG_TERM},
      * {@link BleDeviceState#CONNECTING_OVERALL}, or {@link BleDeviceState#INITIALIZED}
-     * @see ConnectionFailListener.Status#EXPLICIT_DISCONNECT
+     * @see DeviceReconnectFilter.Status#EXPLICIT_DISCONNECT
      */
     public final boolean disconnect()
     {
-        return disconnect_private(null, Status.EXPLICIT_DISCONNECT);
+        return disconnect_private(null, Status.EXPLICIT_DISCONNECT, false);
+    }
+
+    final boolean disconnectAndUndiscover()
+    {
+        return disconnect_private(null, Status.EXPLICIT_DISCONNECT, true);
     }
 
     /**
@@ -3581,11 +1895,11 @@ public final class BleDevice extends BleNode
      *
      * @return <code>true</code> if this call "had an effect", such as if the device was previously {@link BleDeviceState#RECONNECTING_LONG_TERM},
      * {@link BleDeviceState#CONNECTING_OVERALL}, or {@link BleDeviceState#INITIALIZED}
-     * @see ConnectionFailListener.Status#EXPLICIT_DISCONNECT
+     * @see DeviceReconnectFilter.Status#EXPLICIT_DISCONNECT
      */
     public final boolean disconnectWhenReady()
     {
-        return disconnect_private(PE_TaskPriority.LOW, Status.EXPLICIT_DISCONNECT);
+        return disconnect_private(PE_TaskPriority.LOW, Status.EXPLICIT_DISCONNECT, false);
     }
 
     /**
@@ -3594,18 +1908,18 @@ public final class BleDevice extends BleNode
      * {@link com.idevicesinc.sweetblue.utils.State.ChangeIntent#INTENTIONAL}.
      * <br><br>
      * If the device is currently {@link BleDeviceState#CONNECTING_OVERALL} then your
-     * {@link BleDevice.ConnectionFailListener#onEvent(BleDevice.ConnectionFailListener.ConnectionFailEvent)}
-     * implementation will be called with {@link ConnectionFailListener.Status#ROGUE_DISCONNECT}.
+     * {@link DeviceReconnectFilter#onConnectFailed(ReconnectFilter.ConnectFailEvent)}
+     * implementation will be called with {@link DeviceReconnectFilter.Status#ROGUE_DISCONNECT}.
      * <br><br>
      * NOTE: One major difference between this and an actual remote disconnect is that this will not cause the device to enter
      * {@link BleDeviceState#RECONNECTING_SHORT_TERM} or {@link BleDeviceState#RECONNECTING_LONG_TERM}.
      */
     public final boolean disconnect_remote()
     {
-        return disconnect_private(null, Status.ROGUE_DISCONNECT);
+        return disconnect_private(null, Status.ROGUE_DISCONNECT, false);
     }
 
-    private boolean disconnect_private(final PE_TaskPriority priority, final Status status)
+    private boolean disconnect_private(final PE_TaskPriority priority, final Status status, final boolean undiscoverAfter)
     {
         if (isNull()) return false;
 
@@ -3620,7 +1934,7 @@ public final class BleDevice extends BleNode
                 clearForExplicitDisconnect();
             }
 
-            disconnectWithReason(priority, status, Timing.NOT_APPLICABLE, BleStatuses.GATT_STATUS_NOT_APPLICABLE, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, NULL_READWRITE_EVENT());
+            disconnectWithReason(priority, status, Timing.NOT_APPLICABLE, BleStatuses.GATT_STATUS_NOT_APPLICABLE, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, undiscoverAfter, NULL_READWRITE_EVENT());
         }
 
         return !alreadyDisconnected || reconnecting_longTerm || !alreadyQueuedToDisconnect;
@@ -3712,7 +2026,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Same as {@link #startPoll(java.util.UUID, Interval, BleDevice.ReadWriteListener)} but without a listener.
+     * Same as {@link #startPoll(java.util.UUID, Interval, ReadWriteListener)} but without a listener.
      * <br><br>
      * See {@link #read(java.util.UUID)} for an explanation of why you would do this.
      */
@@ -3746,7 +2060,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Convenience to call {@link #startPoll(java.util.UUID, Interval, BleDevice.ReadWriteListener)} for multiple
+     * Convenience to call {@link #startPoll(java.util.UUID, Interval, ReadWriteListener)} for multiple
      * characteristic uuids all at once.
      */
     public final void startPoll(final UUID[] charUuids, final Interval interval, final ReadWriteListener listener)
@@ -3758,7 +2072,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Same as {@link #startPoll(java.util.UUID[], Interval, BleDevice.ReadWriteListener)} but without a listener.
+     * Same as {@link #startPoll(java.util.UUID[], Interval, ReadWriteListener)} but without a listener.
      * <br><br>
      * See {@link #read(java.util.UUID)} for an explanation of why you would do this.
      */
@@ -3768,7 +2082,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Convenience to call {@link #startPoll(java.util.UUID, Interval, BleDevice.ReadWriteListener)} for multiple
+     * Convenience to call {@link #startPoll(java.util.UUID, Interval, ReadWriteListener)} for multiple
      * characteristic uuids all at once.
      */
     public final void startPoll(final Iterable<UUID> charUuids, final Interval interval, final ReadWriteListener listener)
@@ -3784,7 +2098,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Same as {@link #startPoll(java.util.UUID[], Interval, BleDevice.ReadWriteListener)} but without a listener.
+     * Same as {@link #startPoll(java.util.UUID[], Interval, ReadWriteListener)} but without a listener.
      * <br><br>
      * See {@link #read(java.util.UUID)} for an explanation of why you would do this.
      */
@@ -3794,7 +2108,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Convenience to call {@link #startChangeTrackingPoll(java.util.UUID, Interval, BleDevice.ReadWriteListener)} for multiple
+     * Convenience to call {@link #startChangeTrackingPoll(java.util.UUID, Interval, ReadWriteListener)} for multiple
      * characteristic uuids all at once.
      */
     public final void startChangeTrackingPoll(final UUID[] charUuids, final Interval interval, final ReadWriteListener listener)
@@ -3806,7 +2120,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Same as {@link #startChangeTrackingPoll(java.util.UUID[], Interval, BleDevice.ReadWriteListener)} but without a listener.
+     * Same as {@link #startChangeTrackingPoll(java.util.UUID[], Interval, ReadWriteListener)} but without a listener.
      * <br><br>
      * See {@link #read(java.util.UUID)} for an explanation of why you would do this.
      */
@@ -3816,7 +2130,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Convenience to call {@link #startChangeTrackingPoll(java.util.UUID, Interval, BleDevice.ReadWriteListener)} for multiple
+     * Convenience to call {@link #startChangeTrackingPoll(java.util.UUID, Interval, ReadWriteListener)} for multiple
      * characteristic uuids all at once.
      */
     public final void startChangeTrackingPoll(final Iterable<UUID> charUuids, final Interval interval, final ReadWriteListener listener)
@@ -3832,7 +2146,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Same as {@link #startChangeTrackingPoll(java.util.UUID[], Interval, BleDevice.ReadWriteListener)} but without a listener.
+     * Same as {@link #startChangeTrackingPoll(java.util.UUID[], Interval, ReadWriteListener)} but without a listener.
      * <br><br>
      * See {@link #read(java.util.UUID)} for an explanation of why you would do this.
      */
@@ -3887,7 +2201,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Same as {@link #stopPoll(java.util.UUID, BleDevice.ReadWriteListener)} but without the listener.
+     * Same as {@link #stopPoll(java.util.UUID, ReadWriteListener)} but without the listener.
      */
     public final void stopPoll(final UUID characteristicUuid)
     {
@@ -3905,7 +2219,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Same as {@link #stopPoll(java.util.UUID, Interval, BleDevice.ReadWriteListener)} but without the listener.
+     * Same as {@link #stopPoll(java.util.UUID, Interval, ReadWriteListener)} but without the listener.
      */
     public final void stopPoll(final UUID characteristicUuid, final Interval interval)
     {
@@ -3955,7 +2269,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Calls {@link #stopPoll(java.util.UUID, Interval, BleDevice.ReadWriteListener)} multiple times for you.
+     * Calls {@link #stopPoll(java.util.UUID, Interval, ReadWriteListener)} multiple times for you.
      */
     public final void stopPoll(final UUID[] uuids, final Interval interval, final ReadWriteListener listener)
     {
@@ -3982,7 +2296,7 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Calls {@link #stopPoll(java.util.UUID, Interval, BleDevice.ReadWriteListener)} multiple times for you.
+     * Calls {@link #stopPoll(java.util.UUID, Interval, ReadWriteListener)} multiple times for you.
      */
     public final void stopPoll(final Iterable<UUID> uuids, final Interval interval, final ReadWriteListener listener)
     {
@@ -4014,60 +2328,66 @@ public final class BleDevice extends BleNode
 
 
     /**
+     * Overload for {@link #write(BleWrite)}.
+     */
+    public final void writeMany(BleWrite[] writes)
+    {
+        for (int i = 0; i < writes.length; i++)
+        {
+            final BleWrite write = writes[i];
+
+            write(write);
+        }
+    }
+
+    /**
+     * Overload for {@link #write(BleWrite)}.
+     */
+    public final void writeMany(Iterable<BleWrite> writes)
+    {
+        final Iterator<BleWrite> iterator = writes.iterator();
+
+        while (iterator.hasNext())
+        {
+            final BleWrite write = iterator.next();
+
+            write(write);
+        }
+    }
+
+    /**
      * Writes to the device without a callback.
      *
-     * @return (same as {@link #write(UUID, UUID, byte[])}).
-     * @see #write(UUID, UUID, byte[])
+     * @return same as {@link #write(BleWrite, ReadWriteListener)}.
+     * @see #write(BleWrite, ReadWriteListener)
      *
-     * @deprecated - Use {@link #write(com.idevicesinc.sweetblue.WriteBuilder)} instead. This will be removed in v3.0
      */
-    @Deprecated
-    public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(WriteBuilder writeBuilder)
+    public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(BleWrite bleWrite)
     {
-        return write(com.idevicesinc.sweetblue.WriteBuilder.fromDeprecatedWriteBuilder(writeBuilder));
+        // Set the descriptor Uuid to INVALID, to ensure that SweetBlue treats this as a characteristic write, as opposed to a descriptor write.
+        bleWrite.descriptorUuid = Uuids.INVALID;
+        return write_internal(bleWrite);
     }
 
     /**
      * Writes to the device with a callback.
      *
-     * @return (same as {@link #write(UUID, UUID, byte[], ReadWriteListener)}).
-     * @see #write(UUID, UUID, byte[], ReadWriteListener)
-     * @deprecated - Use {@link #write(com.idevicesinc.sweetblue.WriteBuilder, ReadWriteListener)} instead. This will be removed in v3.0
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
+     */
+    public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(BleWrite bleWrite, ReadWriteListener listener)
+    {
+        return write(bleWrite.setReadWriteListener(listener));
+    }
+
+    /**
+     * Writes to the device without a callback.
+     *
+     * @return same as {@link #write(BleWrite, ReadWriteListener)}.
+     * @see #write(BleWrite, ReadWriteListener)
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
     @Deprecated
-    public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(WriteBuilder writeBuilder, ReadWriteListener listener)
-    {
-        return write(com.idevicesinc.sweetblue.WriteBuilder.fromDeprecatedWriteBuilder(writeBuilder), listener);
-    }
-
-    /**
-     * Writes to the device without a callback.
-     *
-     * @return (same as {@link #write(UUID, UUID, byte[])}).
-     * @see #write(UUID, UUID, byte[])
-     */
-    public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(com.idevicesinc.sweetblue.WriteBuilder writeBuilder)
-    {
-        return write_internal(writeBuilder);
-    }
-
-    /**
-     * Writes to the device with a callback.
-     *
-     * @return (same as {@link #write(UUID, UUID, byte[], ReadWriteListener)}).
-     * @see #write(UUID, UUID, byte[], ReadWriteListener)
-     */
-    public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(com.idevicesinc.sweetblue.WriteBuilder writeBuilder, ReadWriteListener listener)
-    {
-        return write_internal(writeBuilder.setReadWriteListener_dep(listener));
-    }
-
-    /**
-     * Writes to the device without a callback.
-     *
-     * @return (same as {@link #write(UUID, byte[], ReadWriteListener)}).
-     * @see #write(UUID, byte[], ReadWriteListener)
-     */
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID characteristicUuid, final byte[] data)
     {
         return this.write(characteristicUuid, new PresentData(data), (ReadWriteListener) null);
@@ -4076,9 +2396,12 @@ public final class BleDevice extends BleNode
     /**
      * Writes to the device without a callback.
      *
-     * @return (same as {@link #write(UUID, byte[], ReadWriteListener)}).
-     * @see #write(UUID, byte[], ReadWriteListener)
+     * @return same as {@link #write(BleWrite, ReadWriteListener)}.
+     * @see #write(BleWrite, ReadWriteListener)
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID characteristicUuid, final DescriptorFilter descriptorFilter, final byte[] data)
     {
         return this.write(characteristicUuid, new PresentData(data), descriptorFilter, (ReadWriteListener) null);
@@ -4087,9 +2410,12 @@ public final class BleDevice extends BleNode
     /**
      * Writes to the device with a callback.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     * @see #write(UUID, byte[])
+     * @return same as {@link #write(BleWrite, ReadWriteListener)}.
+     * @see #write(BleWrite, ReadWriteListener)
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID characteristicUuid, final byte[] data, final ReadWriteListener listener)
     {
         final UUID serviceUuid = null;
@@ -4100,9 +2426,12 @@ public final class BleDevice extends BleNode
     /**
      * Writes to the device with a callback.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     * @see #write(UUID, byte[])
+     * @return same as {@link #write(BleWrite, ReadWriteListener)}.
+     * @see #write(BleWrite, ReadWriteListener)
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID characteristicUuid, final byte[] data, final DescriptorFilter descriptorFilter, final ReadWriteListener listener)
     {
         final UUID serviceUuid = null;
@@ -4112,7 +2441,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #write(UUID, byte[])} for when you have characteristics with identical uuids under different services.
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID serviceUuid, final UUID characteristicUuid, final byte[] data)
     {
         return this.write(serviceUuid, characteristicUuid, new PresentData(data), (ReadWriteListener) null);
@@ -4120,7 +2452,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #write(UUID, DescriptorFilter, byte[])} for when you have characteristics with identical uuids under different services.
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID serviceUuid, final UUID characteristicUuid, final DescriptorFilter filter, final byte[] data)
     {
         return this.write(serviceUuid, characteristicUuid, new PresentData(data), filter, (ReadWriteListener) null);
@@ -4128,7 +2463,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #write(UUID, byte[], ReadWriteListener)} for when you have characteristics with identical uuids under different services.
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID serviceUuid, final UUID characteristicUuid, final byte[] data, final ReadWriteListener listener)
     {
         return write(serviceUuid, characteristicUuid, new PresentData(data), listener);
@@ -4136,7 +2474,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #write(UUID, byte[], ReadWriteListener)} for when you have characteristics with identical uuids under different services.
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID serviceUuid, final UUID characteristicUuid, final byte[] data, final DescriptorFilter descriptorFilter, final ReadWriteListener listener)
     {
         return write(serviceUuid, characteristicUuid, new PresentData(data), descriptorFilter, listener);
@@ -4145,9 +2486,12 @@ public final class BleDevice extends BleNode
     /**
      * Writes to the device without a callback.
      *
-     * @return (same as {@link #write(UUID, FutureData, ReadWriteListener)}).
-     * @see #write(UUID, FutureData, ReadWriteListener)
+     * @return same as {@link #write(BleWrite, ReadWriteListener)}.
+     * @see #write(BleWrite, ReadWriteListener)
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID characteristicUuid, final FutureData futureData)
     {
         return this.write(characteristicUuid, futureData, (ReadWriteListener) null);
@@ -4156,9 +2500,12 @@ public final class BleDevice extends BleNode
     /**
      * Writes to the device with a callback.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     * @see #write(UUID, FutureData)
+     * @return same as {@link #write(BleWrite, ReadWriteListener)}.
+     * @see #write(BleWrite, ReadWriteListener)
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID characteristicUuid, final FutureData futureData, final ReadWriteListener listener)
     {
         final UUID serviceUuid = null;
@@ -4169,9 +2516,12 @@ public final class BleDevice extends BleNode
     /**
      * Writes to the device with a callback.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     * @see #write(UUID, FutureData)
+     * @return same as {@link #write(BleWrite, ReadWriteListener)}.
+     * @see #write(BleWrite, ReadWriteListener)
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID characteristicUuid, final FutureData futureData, final DescriptorFilter descriptorFilter, final ReadWriteListener listener)
     {
         final UUID serviceUuid = null;
@@ -4181,7 +2531,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #write(UUID, FutureData)} for when you have characteristics with identical uuids under different services.
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID serviceUuid, final UUID characteristicUuid, final FutureData futureData)
     {
         return this.write(serviceUuid, characteristicUuid, futureData, (ReadWriteListener) null);
@@ -4190,7 +2543,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #write(UUID, FutureData)} for when you have characteristics with identical uuids under different services.
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID serviceUuid, final UUID characteristicUuid, final FutureData futureData, final DescriptorFilter descriptorFilter)
     {
         return this.write(serviceUuid, characteristicUuid, futureData, descriptorFilter, (ReadWriteListener) null);
@@ -4198,30 +2554,38 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #write(UUID, FutureData, ReadWriteListener)} for when you have characteristics with identical uuids under different services.
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID serviceUuid, final UUID characteristicUuid, final FutureData futureData, final ReadWriteListener listener)
     {
-        final com.idevicesinc.sweetblue.WriteBuilder write = new com.idevicesinc.sweetblue.WriteBuilder(serviceUuid, characteristicUuid)
-                .setData(futureData).setReadWriteListener_dep(listener);
+        final BleWrite write = new BleWrite(serviceUuid, characteristicUuid).setData(futureData).setReadWriteListener(listener);
         return write_internal(write);
     }
 
     /**
      * Overload of {@link #write(UUID, FutureData, ReadWriteListener)} for when you have characteristics with identical uuids under the same service.
+     *
+     * @deprecated to be removed in 3.1, use {@link #write(BleWrite)}, or {@link #write(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent write(final UUID serviceUuid, final UUID characteristicUuid, final FutureData futureData, final DescriptorFilter descriptorFilter, final ReadWriteListener listener)
     {
-        final com.idevicesinc.sweetblue.WriteBuilder builder = new com.idevicesinc.sweetblue.WriteBuilder(serviceUuid, characteristicUuid)
-                .setDescriptorFilter(descriptorFilter).setReadWriteListener_dep(listener).setData(futureData);
+        final BleWrite builder = new BleWrite(serviceUuid, characteristicUuid).setDescriptorFilter(descriptorFilter).
+                setReadWriteListener(listener).setData(futureData);
         return write_internal(builder);
     }
 
     /**
      * Writes to the device descriptor without a callback.
      *
-     * @return (same as {@link #writeDescriptor(UUID, byte[], ReadWriteListener)}).
-     * @see #writeDescriptor(UUID, byte[], ReadWriteListener)
+     * @return same as {@link #writeDescriptor(BleWrite, ReadWriteListener)}.
+     * @see #writeDescriptor(BleWrite, ReadWriteListener)
+     *
+     * @deprecated to be removed in 3.1, use {@link #writeDescriptor(BleWrite)}, or {@link #writeDescriptor(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent writeDescriptor(final UUID descriptorUuid, final byte[] data)
     {
         return writeDescriptor(descriptorUuid, data, (ReadWriteListener) null);
@@ -4230,9 +2594,12 @@ public final class BleDevice extends BleNode
     /**
      * Writes to the device descriptor with a callback.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     * @see #writeDescriptor(UUID, byte[])
+     * @return same as {@link #writeDescriptor(BleWrite, ReadWriteListener)}.
+     * @see #writeDescriptor(BleWrite, ReadWriteListener)
+     *
+     * @deprecated to be removed in 3.1, use {@link #writeDescriptor(BleWrite)}, or {@link #writeDescriptor(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent writeDescriptor(final UUID descriptorUuid, final byte[] data, final ReadWriteListener listener)
     {
         final UUID characteristicUuid = null;
@@ -4242,7 +2609,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #writeDescriptor(UUID, byte[])} for when you have descriptors with identical uuids under different services.
+     *
+     * @deprecated to be removed in 3.1, use {@link #writeDescriptor(BleWrite)}, or {@link #writeDescriptor(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent writeDescriptor(final UUID characteristicUuid, final UUID descriptorUuid, final byte[] data)
     {
         return writeDescriptor(characteristicUuid, descriptorUuid, data, (ReadWriteListener) null);
@@ -4250,7 +2620,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #writeDescriptor(UUID, byte[], ReadWriteListener)} for when you have descriptors with identical uuids under different characteristics.
+     *
+     * @deprecated to be removed in 3.1, use {@link #writeDescriptor(BleWrite)}, or {@link #writeDescriptor(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent writeDescriptor(final UUID characteristicUuid, final UUID descriptorUuid, final byte[] data, final ReadWriteListener listener)
     {
         final UUID serviceUuid = null;
@@ -4260,7 +2633,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #writeDescriptor(UUID, byte[], ReadWriteListener)} for when you have descriptors with identical uuids under different characteristics and/or services.
+     *
+     * @deprecated to be removed in 3.1, use {@link #writeDescriptor(BleWrite)}, or {@link #writeDescriptor(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent writeDescriptor(final UUID serviceUuid, final UUID characteristicUuid, final UUID descriptorUuid, final byte[] data, final ReadWriteListener listener)
     {
         return writeDescriptor(serviceUuid, characteristicUuid, descriptorUuid, new PresentData(data), listener);
@@ -4269,9 +2645,12 @@ public final class BleDevice extends BleNode
     /**
      * Writes to the device descriptor without a callback.
      *
-     * @return (same as {@link #writeDescriptor(UUID, byte[], ReadWriteListener)}).
-     * @see #writeDescriptor(UUID, byte[], ReadWriteListener)
+     * @return same as {@link #writeDescriptor(BleWrite, ReadWriteListener)}.
+     * @see #writeDescriptor(BleWrite, ReadWriteListener)
+     *
+     * @deprecated to be removed in 3.1, use {@link #writeDescriptor(BleWrite)}, or {@link #writeDescriptor(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent writeDescriptor(final UUID descriptorUuid, final FutureData futureData)
     {
         return writeDescriptor(descriptorUuid, futureData, (ReadWriteListener) null);
@@ -4280,9 +2659,12 @@ public final class BleDevice extends BleNode
     /**
      * Writes to the device with a callback.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     * @see #writeDescriptor(UUID, byte[])
+     * @return same as {@link #writeDescriptor(BleWrite, ReadWriteListener)}.
+     * @see #writeDescriptor(BleWrite, ReadWriteListener)
+     *
+     * @deprecated to be removed in 3.1, use {@link #writeDescriptor(BleWrite)}, or {@link #writeDescriptor(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent writeDescriptor(final UUID descriptorUuid, final FutureData futureData, final ReadWriteListener listener)
     {
         final UUID characteristicUuid = null;
@@ -4292,7 +2674,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #writeDescriptor(UUID, byte[])} for when you have descriptors with identical uuids under different services.
+     *
+     * @deprecated to be removed in 3.1, use {@link #writeDescriptor(BleWrite)}, or {@link #writeDescriptor(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent writeDescriptor(final UUID characteristicUuid, final UUID descriptorUuid, final FutureData futureData)
     {
         return writeDescriptor(characteristicUuid, descriptorUuid, futureData, (ReadWriteListener) null);
@@ -4300,7 +2685,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #writeDescriptor(UUID, byte[], ReadWriteListener)} for when you have descriptors with identical uuids under different characteristics.
+     *
+     * @deprecated to be removed in 3.1, use {@link #writeDescriptor(BleWrite)}, or {@link #writeDescriptor(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent writeDescriptor(final UUID characteristicUuid, final UUID descriptorUuid, final FutureData futureData, final ReadWriteListener listener)
     {
         return writeDescriptor(null, characteristicUuid, descriptorUuid, futureData, listener);
@@ -4308,32 +2696,59 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #writeDescriptor(UUID, byte[], ReadWriteListener)} for when you have descriptors with identical uuids under different characteristics and/or services.
+     *
+     * @deprecated to be removed in 3.1, use {@link #writeDescriptor(BleWrite)}, or {@link #writeDescriptor(BleWrite, ReadWriteListener)} instead
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent writeDescriptor(final UUID serviceUuid, final UUID characteristicUuid, final UUID descriptorUuid, final FutureData futureData, final ReadWriteListener listener)
     {
-        final com.idevicesinc.sweetblue.WriteBuilder builder = new com.idevicesinc.sweetblue.WriteBuilder(serviceUuid, characteristicUuid);
-        builder.setDescriptorUUID(descriptorUuid).setData(futureData).setReadWriteListener_dep(listener);
-        return write_internal(builder);
+        final BleWrite builder = new BleWrite(serviceUuid, characteristicUuid).setDescriptorUUID(descriptorUuid).setData(futureData).
+                setReadWriteListener(listener);
+        return writeDescriptor(builder);
     }
 
     /**
-     * Reads from the device without a callback - the callback will still be sent through any listeners provided
-     * to either {@link BleDevice#setListener_ReadWrite(ReadWriteListener)} or {@link BleManager#setListener_ReadWrite(com.idevicesinc.sweetblue.BleDevice.ReadWriteListener)}.
+     * Writes to the device descriptor without a callback.
      *
-     * @return (same as {@link #readDescriptor(UUID, BleDevice.ReadWriteListener)}).
-     * @see #readDescriptor(UUID, ReadWriteListener)
+     * @return same as {@link #writeDescriptor(BleWrite, ReadWriteListener)}.
+     * @see #writeDescriptor(BleWrite, ReadWriteListener)
      */
+    public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent writeDescriptor(BleWrite write)
+    {
+        // If no descriptor Uuid is set, or it's invalid, then early out here so we don't try to write to a characteristic.
+        if (write.descriptorUuid == null || write.descriptorUuid == Uuids.INVALID)
+            return new ReadWriteEvent(this, write, write.writeType, ReadWriteListener.Target.DESCRIPTOR, ReadWriteListener.Status.NO_DESCRIPTOR_UUID, BleStatuses.GATT_STATUS_NOT_APPLICABLE, 0.0, 0.0, /*solicited=*/true);
+        return write_internal(write);
+    }
+
+    /**
+     * Writes to the device descriptor with a callback.
+     *
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
+     */
+    public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent writeDescriptor(BleWrite write, ReadWriteListener listener)
+    {
+        write.setReadWriteListener(listener);
+        return writeDescriptor(write);
+    }
+
+    /**
+     * Overload of {@link #readDescriptor(BleRead)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #readDescriptor(BleRead)} instead.
+     */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent readDescriptor(final UUID descriptorUuid)
     {
         return readDescriptor(descriptorUuid, (ReadWriteListener) null);
     }
 
     /**
-     * Reads from the device with a callback.
+     * Overload of {@link #readDescriptor(BleRead)}.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
-     * @see #readDescriptor(UUID)
+     * @deprecated - This will be removed in v3.1. Please use {@link #readDescriptor(BleRead)} instead.
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent readDescriptor(final UUID descriptorUuid, final ReadWriteListener listener)
     {
         final UUID characteristicUuid = null;
@@ -4342,41 +2757,67 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Overload of {@link #readDescriptor(UUID)} for when you have descriptors with identical uuids under different services.
+     * Overload of {@link #readDescriptor(BleRead)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #readDescriptor(BleRead)} instead.
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent readDescriptor(final UUID characteristicUuid, final UUID descriptorUuid)
     {
         return readDescriptor(characteristicUuid, descriptorUuid, (ReadWriteListener) null);
     }
 
     /**
-     * Overload of {@link #readDescriptor(UUID, ReadWriteListener)} for when you have descriptors with identical uuids under different characteristics.
+     * Overload of {@link #readDescriptor(BleRead)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #readDescriptor(BleRead)} instead.
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent readDescriptor(final UUID characteristicUuid, final UUID descriptorUuid, final ReadWriteListener listener)
     {
         return readDescriptor(null, characteristicUuid, descriptorUuid, listener);
     }
 
     /**
-     * Overload of {@link #readDescriptor(UUID, ReadWriteListener)} for when you have descriptors with identical uuids under different characteristics and/or services.
+     * Overload of {@link #readDescriptor(BleRead)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #readDescriptor(BleRead)} instead.
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent readDescriptor(final UUID serviceUuid, final UUID characteristicUuid, final UUID descriptorUuid)
     {
         return readDescriptor(serviceUuid, characteristicUuid, descriptorUuid, null);
     }
 
     /**
-     * Overload of {@link #readDescriptor(UUID, ReadWriteListener)} for when you have descriptors with identical uuids under different characteristics and/or services.
+     * Overload of {@link #readDescriptor(BleRead)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #readDescriptor(BleRead)} instead.
      */
+    @Deprecated
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent readDescriptor(final UUID serviceUuid, final UUID characteristicUuid, final UUID descriptorUuid, final ReadWriteListener listener)
     {
-        return read_internal(serviceUuid, characteristicUuid, descriptorUuid, Type.READ, null, listener);
+        final BleRead read = new BleRead(serviceUuid, characteristicUuid).setDescriptorUUID(descriptorUuid).setReadWriteListener(listener);
+        return readDescriptor(read);
+    }
+
+    /**
+     * Reads a descriptor from the device with a callback, if one is set in the provided {@link BleRead}.
+     *
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
+     */
+    public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent readDescriptor(final BleRead read)
+    {
+        // If there's no descriptor UUID set, or it's invalid, then we early out here to avoid trying to read a characteristic.
+        if (read.descriptorUuid == null || read.descriptorUuid == Uuids.INVALID)
+            return new ReadWriteEvent(this, read, Type.READ, ReadWriteListener.Target.DESCRIPTOR, ReadWriteListener.Status.NO_DESCRIPTOR_UUID, BleStatuses.GATT_STATUS_NOT_APPLICABLE, 0.0, 0.0, /*solicited=*/true);
+        return read_internal(Type.READ, read);
     }
 
     /**
      * Same as {@link #readRssi(ReadWriteListener)} but use this method when you don't much care when/if the RSSI is actually updated.
      *
-     * @return (same as {@link #readRssi(ReadWriteListener)}).
+     * @return same as {@link #readRssi(ReadWriteListener)}.
      */
     public final ReadWriteListener.ReadWriteEvent readRssi()
     {
@@ -4389,11 +2830,11 @@ public final class BleDevice extends BleNode
      * this call to succeed. When the device is not {@link BleDeviceState#CONNECTED} then the value returned by
      * {@link #getRssi()} will be automatically updated every time this device is discovered (or rediscovered) by a scan operation.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
      */
     public final ReadWriteListener.ReadWriteEvent readRssi(final ReadWriteListener listener)
     {
-        final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(Uuids.INVALID, Uuids.INVALID, Uuids.INVALID, null, P_Const.EMPTY_FUTURE_DATA, Type.READ, ReadWriteListener.Target.RSSI);
+        final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(BleRead.INVALID, Type.READ, ReadWriteListener.Target.RSSI);
 
         if (earlyOutResult != null)
         {
@@ -4410,7 +2851,7 @@ public final class BleDevice extends BleNode
     /**
      * Same as {@link #setConnectionPriority(BleConnectionPriority, ReadWriteListener)} but use this method when you don't much care when/if the connection priority is updated.
      *
-     * @return (same as {@link #setConnectionPriority(BleConnectionPriority, ReadWriteListener)}).
+     * @return same as {@link #setConnectionPriority(BleConnectionPriority, ReadWriteListener)}.
      */
     @Advanced
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent setConnectionPriority(final BleConnectionPriority connectionPriority)
@@ -4424,7 +2865,7 @@ public final class BleDevice extends BleNode
      * instantaneous. When we receive confirmation from the native stack then this value will be updated. The device must be {@link BleDeviceState#CONNECTED} for
      * this call to succeed.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
      * @see #setConnectionPriority(BleConnectionPriority, ReadWriteListener)
      * @see #getConnectionPriority()
      */
@@ -4446,7 +2887,7 @@ public final class BleDevice extends BleNode
         }
         else
         {
-            final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(Uuids.INVALID, Uuids.INVALID, Uuids.INVALID, null, P_Const.EMPTY_FUTURE_DATA, Type.WRITE, ReadWriteListener.Target.CONNECTION_PRIORITY);
+            final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(BleWrite.INVALID, Type.WRITE, ReadWriteListener.Target.CONNECTION_PRIORITY);
 
             if (earlyOutResult != null)
             {
@@ -4486,7 +2927,7 @@ public final class BleDevice extends BleNode
     /**
      * Same as {@link #setMtuToDefault(ReadWriteListener)} but use this method when you don't much care when/if the "maximum transmission unit" is actually updated.
      *
-     * @return (same as {@link #setMtu(int, ReadWriteListener)}).
+     * @return same as {@link #setMtu(int, ReadWriteListener)}.
      */
     @Advanced
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent setMtuToDefault()
@@ -4499,7 +2940,7 @@ public final class BleDevice extends BleNode
      * Unlike {@link #setMtu(int)}, this can be called when the device is {@link BleDeviceState#DISCONNECTED} in the event that you don't want the
      * MTU to be auto-set upon next reconnection.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
      */
     @Advanced
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent setMtuToDefault(final ReadWriteListener listener)
@@ -4523,7 +2964,7 @@ public final class BleDevice extends BleNode
     /**
      * Same as {@link #setMtu(int, ReadWriteListener)} but use this method when you don't much care when/if the "maximum transmission unit" is actually updated.
      *
-     * @return (same as {@link #setMtu(int, ReadWriteListener)}).
+     * @return same as {@link #setMtu(int, ReadWriteListener)}.
      */
     @Advanced
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent setMtu(final int mtu)
@@ -4542,7 +2983,7 @@ public final class BleDevice extends BleNode
      * payload. Namely, we've found the Moto Pure X, and the OnePlus OnePlus2 to have this behavior. For those phones any MTU above
      * 50 failed.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
      */
     @Advanced
     public final @Nullable(Prevalence.NEVER) ReadWriteListener.ReadWriteEvent setMtu(final int mtu, final ReadWriteListener listener)
@@ -4572,7 +3013,7 @@ public final class BleDevice extends BleNode
             }
             else
             {
-                final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(Uuids.INVALID, Uuids.INVALID, Uuids.INVALID, null, P_Const.EMPTY_FUTURE_DATA, Type.WRITE, ReadWriteListener.Target.MTU);
+                final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(BleWrite.INVALID, Type.WRITE, ReadWriteListener.Target.MTU);
 
                 if (earlyOutResult != null)
                 {
@@ -4874,7 +3315,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #read(UUID)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #readMany(BleRead[])} instead.
      */
+    @Deprecated
     public final void read(final UUID[] charUuids)
     {
         read(charUuids, null);
@@ -4882,7 +3326,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #read(UUID, ReadWriteListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #readMany(BleRead[])} instead.
      */
+    @Deprecated
     public final void read(final UUID[] charUuids, final ReadWriteListener listener)
     {
         for (int i = 0; i < charUuids.length; i++)
@@ -4892,8 +3339,37 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Overload of {@link #read(UUID)}.
+     * Overload of {@link #read(BleRead)}.
      */
+    public final void readMany(final BleRead[] bleReads)
+    {
+        for (int i = 0; i < bleReads.length; i++)
+        {
+            read(bleReads[i]);
+        }
+    }
+
+    /**
+     * Overload of {@link #read(BleRead)}.
+     */
+    public final void readMany(final Iterable<BleRead> bleReads)
+    {
+        final Iterator<BleRead> it = bleReads.iterator();
+
+        while (it.hasNext())
+        {
+            final BleRead read = it.next();
+
+            read(read);
+        }
+    }
+
+    /**
+     * Overload of {@link #read(UUID)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #readMany(Iterable<BleRead)} instead.
+     */
+    @Deprecated
     public final void read(final Iterable<UUID> charUuids)
     {
         read(charUuids, null);
@@ -4901,7 +3377,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload of {@link #read(UUID, ReadWriteListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #readMany(Iterable<BleRead)} instead.
      */
+    @Deprecated
     public final void read(final Iterable<UUID> charUuids, final ReadWriteListener listener)
     {
         final Iterator<UUID> iterator = charUuids.iterator();
@@ -4915,86 +3394,124 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Same as {@link #read(java.util.UUID, BleDevice.ReadWriteListener)} but you can use this
-     * if you don't immediately care about the result. The callback will still be posted to {@link BleDevice.ReadWriteListener}
-     * instances (if any) provided to {@link BleDevice#setListener_ReadWrite(BleDevice.ReadWriteListener)} and
-     * {@link BleManager#setListener_ReadWrite(BleDevice.ReadWriteListener)}.
+     * Same as {@link #read(java.util.UUID, ReadWriteListener)} but you can use this
+     * if you don't immediately care about the result. The callback will still be posted to {@link ReadWriteListener}
+     * instances (if any) provided to {@link BleDevice#setListener_ReadWrite(ReadWriteListener)} and
+     * {@link BleManager#setListener_Read_Write(ReadWriteListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #read(BleRead)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent read(final UUID characteristicUuid)
     {
         final UUID serviceUuid = null;
 
-        return read_internal(serviceUuid, characteristicUuid, Uuids.INVALID, Type.READ, null, null);
+        return read(serviceUuid, characteristicUuid, null, null);
     }
 
     /**
-     * Same as {@link #read(java.util.UUID, DescriptorFilter, BleDevice.ReadWriteListener)} but you can use this
-     * if you don't immediately care about the result. The callback will still be posted to {@link BleDevice.ReadWriteListener}
-     * instances (if any) provided to {@link BleDevice#setListener_ReadWrite(BleDevice.ReadWriteListener)} and
-     * {@link BleManager#setListener_ReadWrite(BleDevice.ReadWriteListener)}.
+     * Same as {@link #read(java.util.UUID, DescriptorFilter, ReadWriteListener)} but you can use this
+     * if you don't immediately care about the result. The callback will still be posted to {@link ReadWriteListener}
+     * instances (if any) provided to {@link BleDevice#setListener_ReadWrite(ReadWriteListener)} and
+     * {@link BleManager#setListener_Read_Write(ReadWriteListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #read(BleRead)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent read(final UUID characteristicUuid, final DescriptorFilter descriptorFilter)
     {
         final UUID serviceUuid = null;
 
-        return read_internal(serviceUuid, characteristicUuid, Uuids.INVALID, Type.READ, descriptorFilter, null);
+        return read(serviceUuid, characteristicUuid, descriptorFilter, null);
     }
 
     /**
      * Reads a characteristic from the device.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #read(BleRead)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent read(final UUID characteristicUuid, final ReadWriteListener listener)
     {
         final UUID serviceUuid = null;
 
-        return read_internal(serviceUuid, characteristicUuid, Uuids.INVALID, Type.READ, null, listener);
+        return read(serviceUuid, characteristicUuid, null, listener);
     }
 
     /**
      * Reads a characteristic from the device. The provided {@link DescriptorFilter} will grab the correct {@link BluetoothGattCharacteristic} in the case there are
      * more than one with the same {@link UUID} in the same {@link BluetoothGattService}.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #read(BleRead)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent read(final UUID characteristicUuid, final DescriptorFilter descriptorFilter, final ReadWriteListener listener)
     {
         final UUID serviceUuid = null;
 
-        return read_internal(serviceUuid, characteristicUuid, Uuids.INVALID, Type.READ, descriptorFilter, listener);
+        return read(serviceUuid, characteristicUuid, descriptorFilter, listener);
     }
 
     /**
      * Overload of {@link #read(UUID)} for when you have characteristics with identical uuids under different services.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #read(BleRead)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent read(final UUID serviceUuid, final UUID characteristicUuid)
     {
-        return read_internal(serviceUuid, characteristicUuid, Uuids.INVALID, Type.READ, null, null);
+        return read(serviceUuid, characteristicUuid, null, null);
     }
 
     /**
      * Overload of {@link #read(UUID, DescriptorFilter)} for when you have characteristics with identical uuids under the same service.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #read(BleRead)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent read(final UUID serviceUuid, final UUID characteristicUuid, DescriptorFilter descriptorFilter)
     {
-        return read_internal(serviceUuid, characteristicUuid, Uuids.INVALID, Type.READ, descriptorFilter, null);
+        return read(serviceUuid, characteristicUuid, descriptorFilter, null);
     }
 
     /**
      * Overload of {@link #read(UUID, ReadWriteListener)} for when you have characteristics with identical uuids under different services.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #read(BleRead)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent read(final UUID serviceUuid, final UUID characteristicUuid, final ReadWriteListener listener)
     {
-        return read_internal(serviceUuid, characteristicUuid, Uuids.INVALID, Type.READ, null, listener);
+        return read(serviceUuid, characteristicUuid, null, listener);
     }
 
     /**
      * Overload of {@link #read(UUID, DescriptorFilter, ReadWriteListener)} for when you have characteristics with identical uuids under the same service.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #read(BleRead)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent read(final UUID serviceUuid, final UUID characteristicUuid, final DescriptorFilter descriptorFilter, final ReadWriteListener listener)
     {
-        return read_internal(serviceUuid, characteristicUuid, Uuids.INVALID, Type.READ, descriptorFilter, listener);
+        BleRead read = new BleRead(serviceUuid, characteristicUuid).setDescriptorFilter(descriptorFilter).setReadWriteListener(listener);
+        return read(read);
+    }
+
+    /**
+     * Reads a characteristic from the device. The provided {@link DescriptorFilter} (if set in the {@link BleRead} will grab the correct {@link BluetoothGattCharacteristic} in the case there are
+     * more than one with the same {@link UUID} in the same {@link BluetoothGattService}.
+     *
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
+     */
+    public final ReadWriteListener.ReadWriteEvent read(final BleRead read)
+    {
+        // Set the descriptor Uuid to INVALID, to ensure that SweetBlue treats this as a characteristic read, as opposed to a descriptor read.
+        read.descriptorUuid = Uuids.INVALID;
+        return read_internal(Type.READ, read);
     }
 
     /**
@@ -5004,55 +3521,13 @@ public final class BleDevice extends BleNode
      */
     public final ReadWriteEvent readBatteryLevel(ReadWriteListener listener)
     {
-        return read_internal(Uuids.BATTERY_SERVICE_UUID, Uuids.BATTERY_LEVEL, Uuids.INVALID, Type.READ, null, listener);
-    }
-
-    /**
-     * This method is intended to be used when the device has 2 battery characteristics in the same service. The @param valueToMatch tells SweetBlue which
-     * characteristic to actually read from. NOTE: This expects the FULL byte array for comparison, which by the Bluetooth spec found here
-     * <a href="https://www.bluetooth.com/specifications/gatt/viewer?attributeXmlFile=org.bluetooth.descriptor.gatt.characteristic_presentation_format.xml"</a>
-     * says that it should be 7 bytes. SweetBlue will NOT enforce the 7 byte length, in the odd case that someone implements this descriptor out-of-spec.
-     *
-     * @deprecated - Use any of the read() methods which accept a {@link DescriptorFilter} instead. This way, you're not limited to just the battery service/char
-     */
-    @Deprecated
-    public final ReadWriteEvent readBatteryLevel(byte[] valueToMatch, ReadWriteListener listener)
-    {
-        return readBatteryLevel(valueToMatch, Uuids.CHARACTERISTIC_PRESENTATION_FORMAT_DESCRIPTOR_UUID, listener);
-    }
-
-    /**
-     * Read the battery level of this device. This method is intended to be used if the device being read has two battery characteristics in the battery service.
-     * This method allows you to state which descriptor to match the @param valueToMatch to, to pick the correct characteristic to read the battery level from.
-     * This method is needed if you do not implement dual battery level exactly to the Bluetooth spec.
-     *
-     * @deprecated - Use any of the read() methods which accept a {@link DescriptorFilter} instead, so you're not locked into the default service/char for battery.
-     */
-    @Deprecated
-    @Advanced
-    public final ReadWriteEvent readBatteryLevel(byte[] valueToMatch, UUID descriptorUuid, ReadWriteListener listener)
-    {
-        final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(Uuids.BATTERY_SERVICE_UUID, Uuids.BATTERY_LEVEL, Uuids.INVALID, null, P_Const.EMPTY_FUTURE_DATA, Type.READ, ReadWriteListener.Target.CHARACTERISTIC);
-
-        if (earlyOutResult != null)
-        {
-            invokeReadWriteCallback(listener, earlyOutResult);
-
-            return earlyOutResult;
-        }
-
-        final BluetoothGattCharacteristic characteristic = getServiceManager().getCharacteristic(Uuids.BATTERY_SERVICE_UUID, Uuids.BATTERY_LEVEL);
-
-        final boolean requiresBonding = m_bondMngr.bondIfNeeded(characteristic.getUuid(), BondFilter.CharacteristicEventType.READ);
-
-        queue().add(new P_Task_BatteryLevel(this, valueToMatch, descriptorUuid, listener, requiresBonding, m_txnMngr.getCurrent(), getOverrideReadWritePriority()));
-
-        return NULL_READWRITE_EVENT();
+        final BleRead read = new BleRead(Uuids.BATTERY_SERVICE_UUID, Uuids.BATTERY_LEVEL).setReadWriteListener(listener);
+        return read_internal(Type.READ, read);
     }
 
     /**
      * Returns <code>true</code> if notifications are enabled for the given uuid.
-     * NOTE: {@link #isNotifyEnabling(UUID)} may return true here even if this returns false.
+     * NOTE: {@link #isNotifyEnabling(UUID)} may return true even if this method returns false.
      *
      * @see #isNotifyEnabling(UUID)
      */
@@ -5085,7 +3560,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #enableNotify(UUID)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotifies(BleNotify[])} instead.
      */
+    @Deprecated
     public final void enableNotify(final UUID[] charUuids)
     {
         this.enableNotify(charUuids, Interval.INFINITE, null);
@@ -5093,7 +3571,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #enableNotify(UUID, ReadWriteListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotifies(BleNotify[])} instead.
      */
+    @Deprecated
     public final void enableNotify(final UUID[] charUuids, ReadWriteListener listener)
     {
         this.enableNotify(charUuids, Interval.INFINITE, listener);
@@ -5101,7 +3582,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #enableNotify(UUID, Interval)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotifies(BleNotify[])} instead.
      */
+    @Deprecated
     public final void enableNotify(final UUID[] charUuids, final Interval forceReadTimeout)
     {
         this.enableNotify(charUuids, forceReadTimeout, null);
@@ -5109,7 +3593,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #enableNotify(UUID, Interval, ReadWriteListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotifies(BleNotify[])} instead.
      */
+    @Deprecated
     public final void enableNotify(final UUID[] charUuids, final Interval forceReadTimeout, final ReadWriteListener listener)
     {
         for (int i = 0; i < charUuids.length; i++)
@@ -5121,8 +3608,38 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Overload for {@link #enableNotify(UUID)}.
+     * Overload for {@link #enableNotify(BleNotify)}.
      */
+    public final void enableNotifies(BleNotify[] notifies)
+    {
+        for (int i = 0; i < notifies.length; i++)
+        {
+            final BleNotify notify = notifies[i];
+
+            enableNotify(notify);
+        }
+    }
+
+    /**
+     * Overload for {@link #enableNotify(BleNotify)}.
+     */
+    public final void enableNotifies(final Iterable<BleNotify> notifies)
+    {
+        final Iterator<BleNotify> iterator = notifies.iterator();
+
+        while (iterator.hasNext())
+        {
+            final BleNotify notify = iterator.next();
+            enableNotify(notify);
+        }
+    }
+
+    /**
+     * Overload for {@link #enableNotify(UUID)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotifies(Iterable)} instead.
+     */
+    @Deprecated
     public final void enableNotify(final Iterable<UUID> charUuids)
     {
         this.enableNotify(charUuids, Interval.INFINITE, null);
@@ -5130,7 +3647,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #enableNotify(UUID, ReadWriteListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotifies(Iterable)} instead.
      */
+    @Deprecated
     public final void enableNotify(final Iterable<UUID> charUuids, ReadWriteListener listener)
     {
         this.enableNotify(charUuids, Interval.INFINITE, listener);
@@ -5138,7 +3658,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #enableNotify(UUID, Interval)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotifies(Iterable)} instead.
      */
+    @Deprecated
     public final void enableNotify(final Iterable<UUID> charUuids, final Interval forceReadTimeout)
     {
         this.enableNotify(charUuids, forceReadTimeout, null);
@@ -5146,7 +3669,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #enableNotify(UUID, Interval, ReadWriteListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotifies(Iterable)} instead.
      */
+    @Deprecated
     public final void enableNotify(final Iterable<UUID> charUuids, final Interval forceReadTimeout, final ReadWriteListener listener)
     {
         final Iterator<UUID> iterator = charUuids.iterator();
@@ -5160,14 +3686,92 @@ public final class BleDevice extends BleNode
     }
 
     /**
-     * Same as {@link #enableNotify(java.util.UUID, BleDevice.ReadWriteListener)} but you can use
-     * this if you don't need a callback. Callbacks will still be posted to {@link BleDevice.ReadWriteListener}
-     * instances (if any) provided to {@link BleDevice#setListener_ReadWrite(BleDevice.ReadWriteListener)} and
-     * {@link BleManager#setListener_ReadWrite(BleDevice.ReadWriteListener)}.
+     * Overload of {@link #enableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotify(BleNotify)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID characteristicUuid)
     {
         return this.enableNotify(null, characteristicUuid, Interval.INFINITE, null, null);
+    }
+
+    /**
+     * Overload of {@link #enableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotify(BleNotify)} instead.
+     */
+    @Deprecated
+    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID characteristicUuid, ReadWriteListener listener)
+    {
+        return this.enableNotify(null, characteristicUuid, Interval.INFINITE, null, listener);
+    }
+
+    /**
+     * Overload of {@link #enableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotify(BleNotify)} instead.
+     */
+    @Deprecated
+    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID characteristicUuid, final Interval forceReadTimeout)
+    {
+        return this.enableNotify(null, characteristicUuid, forceReadTimeout, null, null);
+    }
+
+    /**
+     * Overload of {@link #enableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotify(BleNotify)} instead.
+     */
+    @Deprecated
+    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID characteristicUuid, final Interval forceReadTimeout, final ReadWriteListener listener)
+    {
+        return this.enableNotify(null, characteristicUuid, forceReadTimeout, null, listener);
+    }
+
+    /**
+     * Overload of {@link #enableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotify(BleNotify)} instead.
+     */
+    @Deprecated
+    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID serviceUuid, final UUID characteristicUuid)
+    {
+        return this.enableNotify(serviceUuid, characteristicUuid, Interval.INFINITE, null, null);
+    }
+
+    /**
+     * Overload of {@link #enableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotify(BleNotify)} instead.
+     */
+    @Deprecated
+    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID serviceUuid, final UUID characteristicUuid, ReadWriteListener listener)
+    {
+        return enableNotify(serviceUuid, characteristicUuid, Interval.INFINITE, null, listener);
+    }
+
+    /**
+     * Overload of {@link #enableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotify(BleNotify)} instead.
+     */
+    @Deprecated
+    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID serviceUuid, final UUID characteristicUuid, final Interval forceReadTimeout)
+    {
+        return enableNotify(serviceUuid, characteristicUuid, forceReadTimeout, null, null);
+    }
+
+    /**
+     * Overload of {@link #enableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #enableNotify(BleNotify)} instead.
+     */
+    @Deprecated
+    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID serviceUuid, final UUID characteristicUuid, final Interval forceReadTimeout, final DescriptorFilter descriptorFilter, final ReadWriteListener listener)
+    {
+        final BleNotify notify = new BleNotify(serviceUuid, characteristicUuid).setForceReadTimeout(forceReadTimeout).setReadWriteListener(listener).setDescriptorFilter(descriptorFilter);
+        return enableNotify(notify);
     }
 
     /**
@@ -5175,72 +3779,22 @@ public final class BleDevice extends BleNode
      * registration for the notification. <code>switch</code> on {@link Type#ENABLING_NOTIFICATION}
      * and {@link Type#NOTIFICATION} (or {@link Type#INDICATION}) in your listener to distinguish between these.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
      */
-    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID characteristicUuid, ReadWriteListener listener)
+    public final ReadWriteListener.ReadWriteEvent enableNotify(BleNotify notify)
     {
-        return this.enableNotify(null, characteristicUuid, Interval.INFINITE, null, listener);
+        return enableNotify_private(notify);
     }
 
-    /**
-     * Same as {@link #enableNotify(java.util.UUID, Interval, BleDevice.ReadWriteListener)} but you can use
-     * this if you don't need a callback. Callbacks will still be posted to {@link BleDevice.ReadWriteListener}
-     * instances (if any) provided to {@link BleDevice#setListener_ReadWrite(BleDevice.ReadWriteListener)} and
-     * {@link BleManager#setListener_ReadWrite(BleDevice.ReadWriteListener)}.
-     */
-    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID characteristicUuid, final Interval forceReadTimeout)
+    private ReadWriteListener.ReadWriteEvent enableNotify_private(BleNotify notify)
     {
-        return this.enableNotify(null, characteristicUuid, forceReadTimeout, null, null);
-    }
-
-    /**
-     * Same as {@link #enableNotify(UUID, ReadWriteListener)} but forces a read after a given amount of time. If you received {@link ReadWriteListener.Status#SUCCESS} for
-     * {@link Type#ENABLING_NOTIFICATION} but haven't received an actual notification in some time it may be a sign that notifications have broken
-     * in the underlying stack.
-     *
-     * @return (same as {@link #enableNotify(UUID, ReadWriteListener)}).
-     */
-    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID characteristicUuid, final Interval forceReadTimeout, final ReadWriteListener listener)
-    {
-        return this.enableNotify(null, characteristicUuid, forceReadTimeout, null, listener);
-    }
-
-    /**
-     * Overload of {@link #enableNotify(UUID)} for when you have characteristics with identical uuids under different services.
-     */
-    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID serviceUuid, final UUID characteristicUuid)
-    {
-        return this.enableNotify(serviceUuid, characteristicUuid, Interval.INFINITE, null, null);
-    }
-
-    /**
-     * Overload of {@link #enableNotify(UUID, ReadWriteListener)} for when you have characteristics with identical uuids under different services.
-     */
-    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID serviceUuid, final UUID characteristicUuid, ReadWriteListener listener)
-    {
-        return this.enableNotify(serviceUuid, characteristicUuid, Interval.INFINITE, null, listener);
-    }
-
-    /**
-     * Overload of {@link #enableNotify(UUID, Interval)} for when you have characteristics with identical uuids under different services.
-     */
-    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID serviceUuid, final UUID characteristicUuid, final Interval forceReadTimeout)
-    {
-        return this.enableNotify(serviceUuid, characteristicUuid, forceReadTimeout, null, null);
-    }
-
-    /**
-     * Overload of {@link #enableNotify(UUID, Interval, ReadWriteListener)} for when you have characteristics with identical uuids under different services.
-     */
-    public final ReadWriteListener.ReadWriteEvent enableNotify(final UUID serviceUuid, final UUID characteristicUuid, final Interval forceReadTimeout, final DescriptorFilter descriptorFilter, final ReadWriteListener listener)
-    {
-        final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(serviceUuid, characteristicUuid, Uuids.INVALID, descriptorFilter, P_Const.EMPTY_FUTURE_DATA, Type.ENABLING_NOTIFICATION, ReadWriteListener.Target.CHARACTERISTIC);
+        final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(notify, Type.ENABLING_NOTIFICATION, ReadWriteListener.Target.CHARACTERISTIC);
 
         if (earlyOutResult != null)
         {
-            invokeReadWriteCallback(listener, earlyOutResult);
+            invokeReadWriteCallback(notify.readWriteListener, earlyOutResult);
 
-            if (earlyOutResult.status() == ReadWriteListener.Status.NO_MATCHING_TARGET || (Interval.INFINITE.equals(forceReadTimeout) || Interval.DISABLED.equals(forceReadTimeout)))
+            if (earlyOutResult.status() == ReadWriteListener.Status.NO_MATCHING_TARGET || (Interval.INFINITE.equals(notify.m_forceReadTimeout) || Interval.DISABLED.equals(notify.m_forceReadTimeout)))
             {
                 //--- DRK > No need to put this notify in the poll manager because either the characteristic wasn't found
                 //--- or the notify (or indicate) property isn't supported and we're not doing a backing read poll.
@@ -5248,8 +3802,9 @@ public final class BleDevice extends BleNode
             }
         }
 
-        final BluetoothGattCharacteristic characteristic = getServiceManager().getCharacteristic(serviceUuid, characteristicUuid);
-        final int/*__E_NotifyState*/ notifyState = m_pollMngr.getNotifyState(serviceUuid, characteristicUuid);
+        final BleCharacteristicWrapper characteristic = getServiceManager().getCharacteristic(notify.serviceUuid, notify.charUuid);
+        final int/*__E_NotifyState*/ notifyState = m_pollMngr.getNotifyState(notify.serviceUuid, notify.charUuid);
+
         final boolean shouldSendOutNotifyEnable = notifyState == P_PollManager.E_NotifyState__NOT_ENABLED && (earlyOutResult == null || earlyOutResult.status() != ReadWriteListener.Status.OPERATION_NOT_SUPPORTED);
 
         final ReadWriteEvent result;
@@ -5257,31 +3812,23 @@ public final class BleDevice extends BleNode
 
         if (shouldSendOutNotifyEnable && characteristic != null && isConnected)
         {
-            m_bondMngr.bondIfNeeded(characteristicUuid, CharacteristicEventType.ENABLE_NOTIFY);
+            m_bondMngr.bondIfNeeded(notify.charUuid, CharacteristicEventType.ENABLE_NOTIFY);
 
-            final P_Task_ToggleNotify task;
+            final P_Task_ToggleNotify task = new P_Task_ToggleNotify(this, notify, true, m_txnMngr.getCurrent(), getOverrideReadWritePriority());
 
-            if (descriptorFilter == null)
-            {
-                task = new P_Task_ToggleNotify(this, characteristic, /*enable=*/true, m_txnMngr.getCurrent(), listener, getOverrideReadWritePriority());
-            }
-            else
-            {
-                task = new P_Task_ToggleNotify(this, serviceUuid, characteristicUuid, descriptorFilter, true, m_txnMngr.getCurrent(), listener, getOverrideReadWritePriority());
-            }
             queue().add(task);
 
-            m_pollMngr.onNotifyStateChange(serviceUuid, characteristicUuid, P_PollManager.E_NotifyState__ENABLING);
+            m_pollMngr.onNotifyStateChange(notify.serviceUuid, notify.charUuid, P_PollManager.E_NotifyState__ENABLING);
 
             result = NULL_READWRITE_EVENT();
         }
         else if (notifyState == P_PollManager.E_NotifyState__ENABLED)
         {
-            if (listener != null && isConnected)
+            if (notify.readWriteListener != null && isConnected)
             {
-                result = m_pollMngr.newAlreadyEnabledEvent(characteristic, serviceUuid, characteristicUuid, descriptorFilter);
+                result = m_pollMngr.newAlreadyEnabledEvent(characteristic.getCharacteristic(), notify.serviceUuid, notify.charUuid, notify.descriptorFilter);
 
-                invokeReadWriteCallback(listener, result);
+                invokeReadWriteCallback(notify.readWriteListener, result);
             }
             else
             {
@@ -5298,7 +3845,7 @@ public final class BleDevice extends BleNode
             result = NULL_READWRITE_EVENT();
         }
 
-        m_pollMngr.startPoll(serviceUuid, characteristicUuid, descriptorFilter, forceReadTimeout.secs(), listener, /*trackChanges=*/true, /*usingNotify=*/true);
+        m_pollMngr.startPoll(notify.serviceUuid, notify.charUuid, notify.descriptorFilter, notify.m_forceReadTimeout.secs(), notify.readWriteListener, /*trackChanges=*/true, /*usingNotify=*/true);
 
         return result;
     }
@@ -5306,100 +3853,160 @@ public final class BleDevice extends BleNode
 
 
     /**
-     * Disables all notifications enabled by {@link #enableNotify(UUID, ReadWriteListener)} or
-     * {@link #enableNotify(UUID, Interval, ReadWriteListener)}. The listener
-     * provided should be the same one that you passed to {@link #enableNotify(UUID, ReadWriteListener)}. Listen for
-     * {@link Type#DISABLING_NOTIFICATION} in your listener to know when the remote device actually confirmed.
+     * Overload of {@link #disableNotify(BleNotify)}.
      *
-     * @return (see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceStateListener, ConnectionFailListener)}).
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotify(BleNotify)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent disableNotify(final UUID characteristicUuid, final ReadWriteListener listener)
     {
         final UUID serviceUuid = null;
 
-        return this.disableNotify_private(serviceUuid, characteristicUuid, null, null, listener);
+        return disableNotify(serviceUuid, characteristicUuid, null, listener);
     }
 
     /**
-     * Same as {@link #disableNotify(UUID, ReadWriteListener)} but filters on the given {@link Interval}.
+     * Overload of {@link #disableNotify(BleNotify)}.
      *
-     * @return (same as {@link #disableNotify(UUID, ReadWriteListener)}).
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotify(BleNotify)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent disableNotify(final UUID characteristicUuid, final Interval forceReadTimeout, final ReadWriteListener listener)
     {
         final UUID serviceUuid = null;
 
-        return this.disableNotify_private(serviceUuid, characteristicUuid, Interval.secs(forceReadTimeout), null, listener);
+        return disableNotify(serviceUuid, characteristicUuid, forceReadTimeout, listener);
     }
 
     /**
-     * Same as {@link #disableNotify(java.util.UUID, BleDevice.ReadWriteListener)} but you can use this if you don't care about the result.
-     * The callback will still be posted to {@link BleDevice.ReadWriteListener}
-     * instances (if any) provided to {@link BleDevice#setListener_ReadWrite(BleDevice.ReadWriteListener)} and
-     * {@link BleManager#setListener_ReadWrite(BleDevice.ReadWriteListener)}.
+     * Overload of {@link #disableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotify(BleNotify)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent disableNotify(final UUID characteristicUuid)
     {
         final UUID serviceUuid = null;
 
-        return this.disableNotify_private(serviceUuid, characteristicUuid, null, null, null);
+        return disableNotify(serviceUuid, characteristicUuid, (DescriptorFilter) null, null);
     }
 
     /**
-     * Same as {@link #disableNotify(UUID, ReadWriteListener)} but filters on the given {@link Interval} without a listener.
+     * Overload of {@link #disableNotify(BleNotify)}.
      *
-     * @return (same as {@link #disableNotify(UUID, ReadWriteListener)}).
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotify(BleNotify)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent disableNotify(final UUID characteristicUuid, final Interval forceReadTimeout)
     {
         final UUID serviceUuid = null;
 
-        return this.disableNotify_private(serviceUuid, characteristicUuid, Interval.secs(forceReadTimeout), null, null);
+        return disableNotify(serviceUuid, characteristicUuid, forceReadTimeout, null);
     }
 
     /**
-     * Overload of {@link #disableNotify(UUID, ReadWriteListener)} for when you have characteristics with identical uuids under different services.
+     * Overload of {@link #disableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotify(BleNotify)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent disableNotify(final UUID serviceUuid, final UUID characteristicUuid, final ReadWriteListener listener)
     {
-        return this.disableNotify_private(serviceUuid, characteristicUuid, null, null, listener);
+        return disableNotify(serviceUuid, characteristicUuid, null, listener);
     }
 
     /**
-     * Overload of {@link #disableNotify(UUID, Interval, ReadWriteListener)} for when you have characteristics with identical uuids under different services.
+     * Overload of {@link #disableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotify(BleNotify)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent disableNotify(final UUID serviceUuid, final UUID characteristicUuid, final Interval forceReadTimeout, final ReadWriteListener listener)
     {
-        return this.disableNotify_private(serviceUuid, characteristicUuid, Interval.secs(forceReadTimeout), null, listener);
+        BleNotify notify = new BleNotify(serviceUuid, characteristicUuid).setForceReadTimeout(forceReadTimeout).setReadWriteListener(listener);
+        return disableNotify(notify);
     }
 
     /**
-     * Overload of {@link #disableNotify(UUID)} for when you have characteristics with identical uuids under different services.
+     * Overload of {@link #disableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotify(BleNotify)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent disableNotify(final UUID serviceUuid, final UUID characteristicUuid)
     {
-        return this.disableNotify_private(serviceUuid, characteristicUuid, null, null, null);
+        return disableNotify(serviceUuid, characteristicUuid, (DescriptorFilter) null, null);
     }
 
     /**
-     * Overload of {@link #disableNotify(UUID, UUID, DescriptorFilter, Interval)} for when you have characteristics with identical uuids under different services.
+     * Overload of {@link #disableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotify(BleNotify)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent disableNotify(final UUID serviceUuid, final UUID characteristicUuid, final Interval forceReadTimeout)
     {
-        return this.disableNotify(serviceUuid, characteristicUuid, null, forceReadTimeout);
+        return disableNotify(serviceUuid, characteristicUuid, null, forceReadTimeout);
     }
 
     /**
-     * Overload of {@link #disableNotify(UUID, Interval)} for when you have characteristics with identical uuids under different services.
+     * Overload of {@link #disableNotify(BleNotify)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotify(BleNotify)} instead.
      */
+    @Deprecated
     public final ReadWriteListener.ReadWriteEvent disableNotify(final UUID serviceUuid, final UUID characteristicUuid, final DescriptorFilter descriptorFilter, final Interval forceReadTimeout)
     {
-        return this.disableNotify_private(serviceUuid, characteristicUuid, Interval.secs(forceReadTimeout), descriptorFilter, null);
+        final BleNotify notify = new BleNotify(serviceUuid, characteristicUuid).setDescriptorFilter(descriptorFilter).setForceReadTimeout(forceReadTimeout);
+        return disableNotify(notify);
+    }
+
+    /**
+     * Disables all notifications enabled by {@link #enableNotify(BleNotify)} or
+     * any of it's overloads. The listener provided should be the same one that you passed to {@link #enableNotify(BleNotify)}. Listen for
+     * {@link Type#DISABLING_NOTIFICATION} in your listener to know when the remote device actually confirmed.
+     *
+     * @return see similar comment for return value of {@link #connect(BleTransaction.Auth, BleTransaction.Init, DeviceConnectListener)}.
+     */
+    public final ReadWriteListener.ReadWriteEvent disableNotify(BleNotify notify)
+    {
+        return disableNotify_private(notify);
+    }
+
+    /**
+     * Overload for {@link #disableNotify(BleNotify)}.
+     */
+    public final void disableNotifies(final BleNotify[] notifies)
+    {
+        for (int i = 0; i < notifies.length; i++)
+        {
+            final BleNotify notify = notifies[i];
+
+            disableNotify(notify);
+        }
+    }
+
+    /**
+     * Overload for {@link #disableNotify(BleNotify)}.
+     */
+    public final void disableNotifies(final Iterable<BleNotify> notifies)
+    {
+        final Iterator<BleNotify> iterator = notifies.iterator();
+
+        while (iterator.hasNext())
+        {
+            final BleNotify notify = iterator.next();
+
+            disableNotify(notify);
+        }
     }
 
     /**
      * Overload for {@link #disableNotify(UUID, ReadWriteListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotifies(BleNotify[])} instead.
      */
+    @Deprecated
     public final void disableNotify(final UUID[] uuids, final ReadWriteListener listener)
     {
         this.disableNotify(uuids, null, listener);
@@ -5407,7 +4014,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #disableNotify(UUID)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotifies(BleNotify[])} instead.
      */
+    @Deprecated
     public final void disableNotify(final UUID[] uuids)
     {
         this.disableNotify(uuids, null, null);
@@ -5415,15 +4025,21 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #disableNotify(UUID, Interval)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotifies(BleNotify[])} instead.
      */
+    @Deprecated
     public final void disableNotify(final UUID[] uuids, final Interval forceReadTimeout)
     {
         this.disableNotify(uuids, forceReadTimeout, null);
     }
 
     /**
-     * Overload for {@link #disableNotify(UUID, Interval, BleDevice.ReadWriteListener)}.
+     * Overload for {@link #disableNotify(UUID, Interval, ReadWriteListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotifies(BleNotify[])} instead.
      */
+    @Deprecated
     public final void disableNotify(final UUID[] uuids, final Interval forceReadTimeout, final ReadWriteListener listener)
     {
         for (int i = 0; i < uuids.length; i++)
@@ -5436,7 +4052,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #disableNotify(UUID)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotifies(Iterable<BleNotify>)} instead.
      */
+    @Deprecated
     public final void disableNotify(final Iterable<UUID> charUuids)
     {
         this.disableNotify(charUuids, Interval.INFINITE, null);
@@ -5444,7 +4063,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #disableNotify(UUID, ReadWriteListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotifies(Iterable<BleNotify>)} instead.
      */
+    @Deprecated
     public final void disableNotify(final Iterable<UUID> charUuids, ReadWriteListener listener)
     {
         this.disableNotify(charUuids, Interval.INFINITE, listener);
@@ -5452,7 +4074,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #disableNotify(UUID, Interval)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotifies(Iterable<BleNotify>)} instead.
      */
+    @Deprecated
     public final void disableNotify(final Iterable<UUID> charUuids, final Interval forceReadTimeout)
     {
         this.disableNotify(charUuids, forceReadTimeout, null);
@@ -5460,7 +4085,10 @@ public final class BleDevice extends BleNode
 
     /**
      * Overload for {@link #disableNotify(UUID, Interval, ReadWriteListener)}.
+     *
+     * @deprecated - This will be removed in v3.1. Please use {@link #disableNotifies(Iterable<BleNotify>)} instead.
      */
+    @Deprecated
     public final void disableNotify(final Iterable<UUID> charUuids, final Interval forceReadTimeout, final ReadWriteListener listener)
     {
         final Iterator<UUID> iterator = charUuids.iterator();
@@ -5627,24 +4255,26 @@ public final class BleDevice extends BleNode
         m_connectionFailMngr.onLongTermTimedOut();
     }
 
-    final void onNewlyDiscovered(final P_NativeDeviceLayer device_native, final BleManagerConfig.ScanFilter.ScanEvent scanEvent_nullable, int rssi, byte[] scanRecord_nullable, final BleDeviceOrigin origin)
+    final void onNewlyDiscovered(final P_NativeDeviceLayer device_native, final ScanFilter.ScanEvent scanEvent_nullable, int rssi, byte[] scanRecord_nullable, final BleDeviceOrigin origin)
     {
         m_origin_latest = origin;
 
         clear_discovery();
 
-        m_nativeWrapper.updateNativeDevice(device_native, scanRecord_nullable);
+//        m_nativeWrapper.updateNativeDevice(device_native, scanRecord_nullable, false);
+
+        m_nativeWrapper.updateNativeDeviceOnly(device_native);
 
         onDiscovered_private(scanEvent_nullable, rssi, scanRecord_nullable);
 
         stateTracker_main().update(E_Intent.UNINTENTIONAL, BleStatuses.GATT_STATUS_NOT_APPLICABLE, m_bondMngr.getNativeBondingStateOverrides(), UNDISCOVERED, false, DISCOVERED, true, ADVERTISING, origin == BleDeviceOrigin.FROM_DISCOVERY, DISCONNECTED, true);
     }
 
-    final void onRediscovered(final P_NativeDeviceLayer device_native, final BleManagerConfig.ScanFilter.ScanEvent scanEvent_nullable, int rssi, byte[] scanRecord_nullable, final BleDeviceOrigin origin)
+    final void onRediscovered(final P_NativeDeviceLayer device_native, final ScanFilter.ScanEvent scanEvent_nullable, int rssi, byte[] scanRecord_nullable, final BleDeviceOrigin origin)
     {
         m_origin_latest = origin;
 
-        m_nativeWrapper.updateNativeDevice(device_native, scanRecord_nullable);
+        m_nativeWrapper.updateNativeDevice(device_native, scanRecord_nullable, Arrays.equals(m_scanRecord, scanRecord_nullable));
 
         onDiscovered_private(scanEvent_nullable, rssi, scanRecord_nullable);
 
@@ -5674,7 +4304,7 @@ public final class BleDevice extends BleNode
         return m_timeSinceLastDiscovery;
     }
 
-    private void onDiscovered_private(final BleManagerConfig.ScanFilter.ScanEvent scanEvent_nullable, final int rssi, byte[] scanRecord_nullable)
+    private void onDiscovered_private(final ScanFilter.ScanEvent scanEvent_nullable, final int rssi, byte[] scanRecord_nullable)
     {
         m_lastDiscoveryTime = EpochTime.now();
         m_timeSinceLastDiscovery = 0.0;
@@ -5767,15 +4397,19 @@ public final class BleDevice extends BleNode
 
     final void unbond_internal(final PE_TaskPriority priority_nullable, final BondListener.Status status)
     {
-        unbond_justAddTheTask(priority_nullable);
-
-        final boolean wasBonding = is(BONDING);
-
-        stateTracker_updateBoth(E_Intent.INTENTIONAL, BleStatuses.GATT_STATUS_NOT_APPLICABLE, P_BondManager.OVERRIDE_UNBONDED_STATES);
-
-        if (wasBonding)
+        // If the unbond task is already in the queue, then do nothing
+        if (!queue().isInQueue(P_Task_Unbond.class, this))
         {
-            m_bondMngr.invokeCallback(status, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, State.ChangeIntent.INTENTIONAL);
+            unbond_justAddTheTask(priority_nullable);
+
+            final boolean wasBonding = is(BONDING);
+
+            stateTracker_updateBoth(E_Intent.INTENTIONAL, BleStatuses.GATT_STATUS_NOT_APPLICABLE, P_BondManager.OVERRIDE_UNBONDED_STATES);
+
+            if (wasBonding)
+            {
+                m_bondMngr.invokeCallback(status, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, State.ChangeIntent.INTENTIONAL);
+            }
         }
     }
 
@@ -5784,11 +4418,11 @@ public final class BleDevice extends BleNode
         return getServiceManager();
     }
 
-    private ConnectionFailListener.ConnectionFailEvent connect_earlyOut()
+    private ConnectFailEvent connect_earlyOut()
     {
         if (isNull())
         {
-            final ConnectionFailListener.ConnectionFailEvent e = ConnectionFailListener.ConnectionFailEvent.EARLY_OUT(this, Status.NULL_DEVICE);
+            final ConnectFailEvent e = ConnectFailEvent.EARLY_OUT(this, Status.NULL_DEVICE);
 
             m_connectionFailMngr.invokeCallback(e);
 
@@ -5806,7 +4440,7 @@ public final class BleDevice extends BleNode
 
         if (isAny_internal(CONNECTED, CONNECTING, CONNECTING_OVERALL))
         {
-            final ConnectionFailListener.ConnectionFailEvent info = ConnectionFailListener.ConnectionFailEvent.EARLY_OUT(this, Status.ALREADY_CONNECTING_OR_CONNECTED);
+            final ConnectFailEvent info = ConnectFailEvent.EARLY_OUT(this, Status.ALREADY_CONNECTING_OR_CONNECTED);
 
             m_connectionFailMngr.invokeCallback(info);
 
@@ -5864,7 +4498,8 @@ public final class BleDevice extends BleNode
         {
             final boolean tryBondingWhileDisconnected = BleDeviceConfig.bool(conf_device().tryBondingWhileDisconnected, conf_mngr().tryBondingWhileDisconnected);
             final boolean tryBondingWhileDisconnected_manageOnDisk = BleDeviceConfig.bool(conf_device().tryBondingWhileDisconnected_manageOnDisk, conf_mngr().tryBondingWhileDisconnected_manageOnDisk);
-            needsBond = Utils.phoneHasBondingIssues() && BleDeviceConfig.bool(conf_device().alwaysBondOnConnect, conf_mngr().alwaysBondOnConnect);
+            final boolean autoBondFix = BleDeviceConfig.bool(conf_device().autoBondFixes, conf_mngr().autoBondFixes);
+            needsBond = autoBondFix && (Utils.phoneHasBondingIssues() || BleDeviceConfig.bool(conf_device().alwaysBondOnConnect, conf_mngr().alwaysBondOnConnect));
             final boolean doPreBond = getManager().m_diskOptionsMngr.loadNeedsBonding(getMacAddress(), tryBondingWhileDisconnected_manageOnDisk) || needsBond;
 
             if (doPreBond && tryBondingWhileDisconnected)
@@ -6010,6 +4645,8 @@ public final class BleDevice extends BleNode
         }
 
         boolean gattRefresh = BleDeviceConfig.bool(conf_device().useGattRefresh, conf_mngr().useGattRefresh);
+        BleDeviceConfig.RefreshOption option = conf_device().gattRefreshOption != null ? conf_device().gattRefreshOption : conf_mngr().gattRefreshOption;
+        gattRefresh = gattRefresh && option == BleDeviceConfig.RefreshOption.BEFORE_SERVICE_DISCOVERY;
         Interval refreshDelay = BleDeviceConfig.interval(conf_device().gattRefreshDelay, conf_mngr().gattRefreshDelay);
         queue().add(new P_Task_DiscoverServices(this, m_taskStateListener, gattRefresh, refreshDelay));
 
@@ -6022,7 +4659,7 @@ public final class BleDevice extends BleNode
         }
     }
 
-    final void onNativeConnectFail(PE_TaskState state, int gattStatus, ConnectionFailListener.AutoConnectUsage autoConnectUsage)
+    final void onNativeConnectFail(PE_TaskState state, int gattStatus, ReconnectFilter.AutoConnectUsage autoConnectUsage)
     {
         m_nativeWrapper.closeGattIfNeeded(/* disconnectAlso= */true);
 
@@ -6042,7 +4679,7 @@ public final class BleDevice extends BleNode
         // }
 
         final boolean wasConnecting = is_internal(CONNECTING_OVERALL);
-        final ConnectionFailListener.Status connectionFailStatus = ConnectionFailListener.Status.NATIVE_CONNECTION_FAILED;
+        final DeviceReconnectFilter.Status connectionFailStatus = DeviceReconnectFilter.Status.NATIVE_CONNECTION_FAILED;
 
         m_txnMngr.cancelAllTransactions();
 
@@ -6055,20 +4692,20 @@ public final class BleDevice extends BleNode
 
         if (wasConnecting)
         {
-            ConnectionFailListener.Timing timing = state == PE_TaskState.FAILED_IMMEDIATELY ? ConnectionFailListener.Timing.IMMEDIATELY : ConnectionFailListener.Timing.EVENTUALLY;
+            DeviceReconnectFilter.Timing timing = state == PE_TaskState.FAILED_IMMEDIATELY ? DeviceReconnectFilter.Timing.IMMEDIATELY : DeviceReconnectFilter.Timing.EVENTUALLY;
 
             if (state == PE_TaskState.TIMED_OUT)
             {
-                timing = ConnectionFailListener.Timing.TIMED_OUT;
+                timing = DeviceReconnectFilter.Timing.TIMED_OUT;
             }
 
             final int retry__PE_Please = m_connectionFailMngr.onConnectionFailed(connectionFailStatus, timing, attemptingReconnect, gattStatus, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, highestState, autoConnectUsage, NULL_READWRITE_EVENT());
 
-            if (!attemptingReconnect && retry__PE_Please == ConnectionFailListener.Please.PE_Please_RETRY_WITH_AUTOCONNECT_TRUE)
+            if (!attemptingReconnect && retry__PE_Please == DeviceReconnectFilter.ConnectFailPlease.PE_Please_RETRY_WITH_AUTOCONNECT_TRUE)
             {
                 m_useAutoConnect = true;
             }
-            else if (!attemptingReconnect && retry__PE_Please == ConnectionFailListener.Please.PE_Please_RETRY_WITH_AUTOCONNECT_FALSE)
+            else if (!attemptingReconnect && retry__PE_Please == DeviceReconnectFilter.ConnectFailPlease.PE_Please_RETRY_WITH_AUTOCONNECT_FALSE)
             {
                 m_useAutoConnect = false;
             }
@@ -6128,6 +4765,31 @@ public final class BleDevice extends BleNode
                 INITIALIZED, true, RETRYING_BLE_CONNECTION, false);
 
         stateTracker_main().remove(BleDeviceState.RECONNECTING_SHORT_TERM, E_Intent.UNINTENTIONAL, BleStatuses.GATT_STATUS_NOT_APPLICABLE);
+
+        final DeviceConnectListener.ConnectEvent event = new DeviceConnectListener.ConnectEvent(this, null);
+
+        invokeConnectCallbacks(event);
+
+    }
+
+    final void invokeConnectCallbacks(DeviceConnectListener.ConnectEvent event)
+    {
+        // Post to the ephemeral listener first, if it's not null
+        if (m_ephemeralConnectListener != null && m_ephemeralConnectListener.get() != null)
+        {
+            m_ephemeralConnectListener.get().onEvent(event);
+        }
+
+        // Now post to the default listener, if there is one
+        DeviceConnectListener listener = getListener_Connect();
+
+        if (listener != null)
+            listener.onEvent(event);
+
+        // Now post to the manager's listener, if there is one
+        listener = getManager().m_defaultDeviceConnectListener;
+        if (listener != null)
+            listener.onEvent(event);
     }
 
     final void setStateToDisconnected(final boolean attemptingReconnect_longTerm, final boolean retryingConnection, final E_Intent intent, final int gattStatus, final boolean forceMainStateTracker, final Object[] overrideBondingStates)
@@ -6140,6 +4802,8 @@ public final class BleDevice extends BleNode
 
         final P_DeviceStateTracker tracker = forceMainStateTracker ? stateTracker_main() : stateTracker();
 
+        final int bondState = m_nativeWrapper.getNativeBondState();
+
         tracker.set
                 (
                         intent,
@@ -6148,9 +4812,9 @@ public final class BleDevice extends BleNode
                         DISCONNECTED, true,
                         // Commenting these out because of un-thought-of case where you unbond then immediately disconnect...native bond state is still BONDED but abstracted state is UNBONDED so a state transition occurs where it shouldn't.
                         // Uncommenting these out to reflect actual bond state when the device gets disconnected
-			            BONDING, m_nativeWrapper.isNativelyBonding(),
-			            BONDED, m_nativeWrapper.isNativelyBonded(),
-			            UNBONDED, m_nativeWrapper.isNativelyUnbonded(),
+			            BONDING, m_nativeWrapper.isNativelyBonding(bondState),
+			            BONDED, m_nativeWrapper.isNativelyBonded(bondState),
+			            UNBONDED, m_nativeWrapper.isNativelyUnbonded(bondState),
                         RETRYING_BLE_CONNECTION, retryingConnection,
                         RECONNECTING_LONG_TERM, attemptingReconnect_longTerm,
                         ADVERTISING, !attemptingReconnect_longTerm && m_origin_latest == BleDeviceOrigin.FROM_DISCOVERY
@@ -6171,12 +4835,12 @@ public final class BleDevice extends BleNode
         }
     }
 
-    final void disconnectWithReason(ConnectionFailListener.Status connectionFailReasonIfConnecting, Timing timing, int gattStatus, int bondFailReason, ReadWriteListener.ReadWriteEvent txnFailReason)
+    final void disconnectWithReason(DeviceReconnectFilter.Status connectionFailReasonIfConnecting, Timing timing, int gattStatus, int bondFailReason, ReadWriteListener.ReadWriteEvent txnFailReason)
     {
-        disconnectWithReason(null, connectionFailReasonIfConnecting, timing, gattStatus, bondFailReason, txnFailReason);
+        disconnectWithReason(null, connectionFailReasonIfConnecting, timing, gattStatus, bondFailReason, false, txnFailReason);
     }
 
-    final void disconnectWithReason(final PE_TaskPriority disconnectPriority_nullable, final ConnectionFailListener.Status connectionFailReasonIfConnecting, final Timing timing, final int gattStatus, final int bondFailReason, final ReadWriteListener.ReadWriteEvent txnFailReason)
+    final void disconnectWithReason(final PE_TaskPriority disconnectPriority_nullable, final DeviceReconnectFilter.Status connectionFailReasonIfConnecting, final Timing timing, final int gattStatus, final int bondFailReason, final boolean undiscoverAfter, final ReadWriteListener.ReadWriteEvent txnFailReason)
     {
         getManager().getPostManager().runOrPostToUpdateThread(new Runnable()
         {
@@ -6209,6 +4873,7 @@ public final class BleDevice extends BleNode
                     }
 
                     final boolean wasConnecting = is_internal(CONNECTING_OVERALL);
+                    final boolean attemptingReconnect_shortTerm = is(RECONNECTING_SHORT_TERM);
                     final boolean attemptingReconnect_longTerm = cancelled ? false : is(RECONNECTING_LONG_TERM);
 
                     E_Intent intent = cancelled ? E_Intent.INTENTIONAL : E_Intent.UNINTENTIONAL;
@@ -6235,7 +4900,7 @@ public final class BleDevice extends BleNode
                         final int taskOrdinal;
                         final boolean clearQueue;
 
-                        if (isAny_internal(CONNECTED, CONNECTING_OVERALL, INITIALIZED))
+                        if (isAny_internal(CONNECTED, CONNECTING, INITIALIZED))
                         {
                             final P_Task_Disconnect disconnectTask = new P_Task_Disconnect(BleDevice.this, m_taskStateListener, /*explicit=*/explicit, disconnectPriority_nullable, taskIsCancellable, saveLastDisconnectAfterTaskCompletes);
                             queue().add(disconnectTask);
@@ -6264,6 +4929,7 @@ public final class BleDevice extends BleNode
 
                         if (clearQueue)
                         {
+                            queue().clearQueueOf(P_Task_Connect.class, BleDevice.this, -1);
                             queue().clearQueueOf(PA_Task_RequiresConnection.class, BleDevice.this, taskOrdinal);
                         }
 
@@ -6282,14 +4948,17 @@ public final class BleDevice extends BleNode
 //			}
 //		}
 
-                    if (wasConnecting)
+                    if (wasConnecting || attemptingReconnect_shortTerm)
                     {
                         if (getManager().ASSERT(connectionFailReasonIfConnecting != null))
                         {
-                            m_connectionFailMngr.onConnectionFailed(connectionFailReasonIfConnecting, timing, attemptingReconnect_longTerm, gattStatus, bondFailReason, highestState, ConnectionFailListener.AutoConnectUsage.NOT_APPLICABLE, txnFailReason);
+                            m_connectionFailMngr.onConnectionFailed(connectionFailReasonIfConnecting, timing, attemptingReconnect_longTerm, gattStatus, bondFailReason, highestState, ReconnectFilter.AutoConnectUsage.NOT_APPLICABLE, txnFailReason);
                         }
                     }
                 }
+
+                if (undiscoverAfter)
+                    getManager().m_deviceMngr.undiscoverAndRemove(BleDevice.this, getManager().m_discoveryListener, getManager().m_deviceMngr_cache, E_Intent.INTENTIONAL);
             }
         });
     }
@@ -6365,7 +5034,7 @@ public final class BleDevice extends BleNode
 
         if (!ignoreKindOf)
         {
-            if (isDisconnectedAfterReconnectingShortTermStateCallback || wasExplicit)
+            if (isDisconnectedAfterReconnectingShortTermStateCallback/* || wasExplicit*/)
             {
                 m_connectionFailMngr.onExplicitDisconnect();
 
@@ -6417,16 +5086,16 @@ public final class BleDevice extends BleNode
         //--- DRK > Technically user could have called connect() in callbacks above....bad form but we need to account for it.
         final boolean isConnectingOverall_1 = is_internal(CONNECTING_OVERALL);
         final boolean isStillAttemptingReconnect_longTerm = is_internal(RECONNECTING_LONG_TERM);
-        final ConnectionFailListener.Status connectionFailReason_nullable;
+        final DeviceReconnectFilter.Status connectionFailReason_nullable;
         if (!m_reconnectMngr_shortTerm.isRunning() && wasConnectingOverall && !wasExplicit)
         {
             if (getManager().isAny(BleManagerState.TURNING_OFF, BleManagerState.OFF))
             {
-                connectionFailReason_nullable = ConnectionFailListener.Status.BLE_TURNING_OFF;
+                connectionFailReason_nullable = DeviceReconnectFilter.Status.BLE_TURNING_OFF;
             }
             else
             {
-                connectionFailReason_nullable = ConnectionFailListener.Status.ROGUE_DISCONNECT;
+                connectionFailReason_nullable = DeviceReconnectFilter.Status.ROGUE_DISCONNECT;
             }
         }
         else
@@ -6464,11 +5133,11 @@ public final class BleDevice extends BleNode
                 // So we don't need to post the event again here.
                 if (!isDisconnectedAfterReconnectingShortTermStateCallback)
                 {
-                    retrying__PE_Please = m_connectionFailMngr.onConnectionFailed(connectionFailReason_nullable, Timing.NOT_APPLICABLE, isStillAttemptingReconnect_longTerm, gattStatus, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, highestState, AutoConnectUsage.NOT_APPLICABLE, NULL_READWRITE_EVENT());
+                    retrying__PE_Please = m_connectionFailMngr.onConnectionFailed(connectionFailReason_nullable, Timing.NOT_APPLICABLE, isStillAttemptingReconnect_longTerm, gattStatus, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, highestState, ReconnectFilter.AutoConnectUsage.NOT_APPLICABLE, NULL_READWRITE_EVENT());
                 }
                 else
                 {
-                    retrying__PE_Please = ConnectionFailListener.Please.PE_Please_DO_NOT_RETRY;
+                    retrying__PE_Please = DeviceReconnectFilter.ConnectFailPlease.PE_Please_DO_NOT_RETRY;
                 }
             }
             else
@@ -6480,14 +5149,14 @@ public final class BleDevice extends BleNode
                 }
                 else
                 {
-                    retrying__PE_Please = m_connectionFailMngr.onConnectionFailed(connectionFailReason_nullable, Timing.NOT_APPLICABLE, isStillAttemptingReconnect_longTerm, gattStatus, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, highestState, AutoConnectUsage.NOT_APPLICABLE, NULL_READWRITE_EVENT());
+                    retrying__PE_Please = m_connectionFailMngr.onConnectionFailed(connectionFailReason_nullable, Timing.NOT_APPLICABLE, isStillAttemptingReconnect_longTerm, gattStatus, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, highestState, ReconnectFilter.AutoConnectUsage.NOT_APPLICABLE, NULL_READWRITE_EVENT());
 //                    retrying__PE_Please = ConnectionFailListener.Please.PE_Please_DO_NOT_RETRY;PE_Please_DO_NOT_RETRY
                 }
             }
         }
         else
         {
-            retrying__PE_Please = ConnectionFailListener.Please.PE_Please_DO_NOT_RETRY;
+            retrying__PE_Please = DeviceReconnectFilter.ConnectFailPlease.PE_Please_DO_NOT_RETRY;
         }
 
         //--- DRK > Again, technically user could have called connect() in callbacks above....bad form but we need to account for it.
@@ -6508,7 +5177,7 @@ public final class BleDevice extends BleNode
         //---		so we have to bail out.
         if (is(DISCONNECTED) && !is(RECONNECTING_LONG_TERM) && m_reconnectMngr_longTerm.isRunning() == false && m_reconnectMngr_shortTerm.isRunning() == false)
         {
-            if (m_nativeWrapper.isNativelyConnecting() || m_nativeWrapper.isNativelyConnected())
+            if (m_nativeWrapper.isNativelyConnectingOrConnected())
             {
                 queue().add(new P_Task_Disconnect(this, m_taskStateListener, /*explicit=*/false, null, /*cancellable=*/true));
             }
@@ -6517,14 +5186,14 @@ public final class BleDevice extends BleNode
         //--- DRK > Not actually entirely sure how, it may be legitimate, but a connect task can still be
         //--- hanging out in the queue at this point, so we just make sure to clear the queue as a failsafe.
         //--- TODO: Understand the conditions under which a connect task can still be queued...might be a bug upstream.
-        if (!isConnectingOverall_2 && retrying__PE_Please == ConnectionFailListener.Please.PE_Please_DO_NOT_RETRY)
+        if (!isConnectingOverall_2 && retrying__PE_Please == DeviceReconnectFilter.ConnectFailPlease.PE_Please_DO_NOT_RETRY)
         {
             queue().clearQueueOf(P_Task_Connect.class, this, -1);
         }
 
         boolean doReconnectForConnectingOverall = BleDeviceConfig.bool(conf_device().connectFailRetryConnectingOverall, conf_mngr().connectFailRetryConnectingOverall);
 
-        if (doReconnectForConnectingOverall && !wasExplicit && !wasInitialized && retrying__PE_Please != ConnectionFailListener.Please.PE_Please_DO_NOT_RETRY)
+        if (doReconnectForConnectingOverall && !wasExplicit && !wasInitialized && retrying__PE_Please != DeviceReconnectFilter.ConnectFailPlease.PE_Please_DO_NOT_RETRY)
         {
             attemptReconnect();
         }
@@ -6542,51 +5211,37 @@ public final class BleDevice extends BleNode
         m_pollMngr.stopPoll(serviceUuid, characteristicUuid, descriptorFilter, interval, listener, /* usingNotify= */false);
     }
 
-    final ReadWriteListener.ReadWriteEvent read_internal(final UUID serviceUuid, final UUID characteristicUuid, final UUID descriptorUuid, final Type type, DescriptorFilter descriptorFilter, final ReadWriteListener listener)
+    final ReadWriteListener.ReadWriteEvent read_internal(final Type type, final BleRead read)
     {
 
-        final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(serviceUuid, characteristicUuid, Uuids.INVALID, descriptorFilter, P_Const.EMPTY_FUTURE_DATA, type, ReadWriteListener.Target.CHARACTERISTIC);
+        final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(read, type, ReadWriteListener.Target.CHARACTERISTIC);
 
         if (earlyOutResult != null)
         {
-            invokeReadWriteCallback(listener, earlyOutResult);
+            invokeReadWriteCallback(read.readWriteListener, earlyOutResult);
 
             return earlyOutResult;
         }
 
-        if (descriptorUuid == null || descriptorUuid.equals(Uuids.INVALID))
+        if (read.descriptorUuid == null || read.descriptorUuid.equals(Uuids.INVALID))
         {
-            final BluetoothGattCharacteristic characteristic = getServiceManager().getCharacteristic(serviceUuid, characteristicUuid);
-            final boolean requiresBonding = m_bondMngr.bondIfNeeded(characteristicUuid, BondFilter.CharacteristicEventType.READ);
-
-            final P_Task_Read task;
-
-            if (descriptorFilter == null)
-            {
-
-                task = new P_Task_Read(this, characteristic, type, requiresBonding, listener, m_txnMngr.getCurrent(), getOverrideReadWritePriority());
-            }
-            else
-            {
-                task = new P_Task_Read(this, characteristic.getService().getUuid(), characteristicUuid, type, requiresBonding, descriptorFilter, listener, m_txnMngr.getCurrent(), getOverrideReadWritePriority());
-            }
-
+            final boolean requiresBonding = m_bondMngr.bondIfNeeded(read.charUuid, BondFilter.CharacteristicEventType.READ);
+            final P_Task_Read task = new P_Task_Read(this, read, type, requiresBonding, m_txnMngr.getCurrent(), getOverrideReadWritePriority());
             queue().add(task);
         }
         else
         {
             final boolean requiresBonding = false;
-            final BluetoothGattDescriptor descriptor = getNativeDescriptor(serviceUuid, characteristicUuid, descriptorUuid);
 
-            queue().add(new P_Task_ReadDescriptor(this, descriptor, type, requiresBonding, listener, m_txnMngr.getCurrent(), getOverrideReadWritePriority()));
+            queue().add(new P_Task_ReadDescriptor(this, read, type, requiresBonding, m_txnMngr.getCurrent(), getOverrideReadWritePriority()));
         }
 
         return NULL_READWRITE_EVENT();
     }
 
-    final ReadWriteListener.ReadWriteEvent write_internal(final com.idevicesinc.sweetblue.WriteBuilder wb)
+    final ReadWriteListener.ReadWriteEvent write_internal(final BleWrite wb)
     {
-        final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(wb.serviceUuid, wb.charUuid, wb.descriptorUuid, wb.descriptorFilter, wb.data, Type.WRITE, ReadWriteListener.Target.CHARACTERISTIC);
+        final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(wb, Type.WRITE, ReadWriteListener.Target.CHARACTERISTIC);
 
         if (earlyOutResult != null)
         {
@@ -6597,89 +5252,72 @@ public final class BleDevice extends BleNode
 
         if (wb.descriptorUuid == null || wb.descriptorUuid.equals(Uuids.INVALID))
         {
-            final BluetoothGattCharacteristic characteristic = getServiceManager().getCharacteristic(wb.serviceUuid, wb.charUuid);
+            final BleCharacteristicWrapper characteristic = getServiceManager().getCharacteristic(wb.serviceUuid, wb.charUuid);
 
-            final boolean requiresBonding = m_bondMngr.bondIfNeeded(characteristic.getUuid(), BondFilter.CharacteristicEventType.WRITE);
+            final boolean requiresBonding = m_bondMngr.bondIfNeeded(characteristic.getCharacteristic().getUuid(), BondFilter.CharacteristicEventType.WRITE);
 
-            addWriteTasks(characteristic, wb.data, requiresBonding, wb.writeType, wb.descriptorFilter, wb.readWriteListener);
+            addWriteTasks(wb, requiresBonding);
         }
         else
         {
             final boolean requiresBonding = false;
-            final BluetoothGattDescriptor descriptor = getNativeDescriptor(wb.serviceUuid, wb.charUuid, wb.descriptorUuid);
 
-            addWriteDescriptorTasks(descriptor, wb.data, requiresBonding, wb.readWriteListener);
+            addWriteDescriptorTasks(wb, requiresBonding);
         }
 
         return NULL_READWRITE_EVENT();
     }
 
-    private void addWriteDescriptorTasks(BluetoothGattDescriptor descriptor, FutureData data, boolean requiresBonding, ReadWriteListener listener)
+    private void addWriteDescriptorTasks(BleWrite write, boolean requiresBonding)
     {
         int mtuSize = getEffectiveWriteMtuSize();
-        if (!conf_device().autoStripeWrites || data.getData().length < mtuSize)
+        if (!conf_device().autoStripeWrites || write.m_data.getData().length < mtuSize)
         {
-            queue().add(new P_Task_WriteDescriptor(this, descriptor, data, requiresBonding, listener, m_txnMngr.getCurrent(), getOverrideReadWritePriority()));
+            queue().add(new P_Task_WriteDescriptor(this, write, requiresBonding, m_txnMngr.getCurrent(), getOverrideReadWritePriority()));
         }
         else
         {
-            P_StripedWriteDescriptorTransaction descTxn = new P_StripedWriteDescriptorTransaction(data, descriptor, requiresBonding, listener);
+            P_StripedWriteDescriptorTransaction descTxn = new P_StripedWriteDescriptorTransaction(write, requiresBonding);
             performTransaction(descTxn);
         }
     }
 
-    private void addWriteTasks(BluetoothGattCharacteristic characteristic, FutureData data, boolean requiresBonding, Type writeType, DescriptorFilter filter, ReadWriteListener listener)
+    private void addWriteTasks(BleWrite write, boolean requiresBonding)
     {
         int mtuSize = getEffectiveWriteMtuSize();
-        if (!conf_device().autoStripeWrites || data.getData().length < mtuSize)
+        if (!conf_device().autoStripeWrites || write.m_data.getData().length <= mtuSize)
         {
-            final P_Task_Write task_write;
-            if (filter == null)
-            {
-                task_write = new P_Task_Write(this, characteristic, data, requiresBonding, writeType, listener, m_txnMngr.getCurrent(), getOverrideReadWritePriority());
-            }
-            else
-            {
-                task_write = new P_Task_Write(this, characteristic.getService().getUuid(), characteristic.getUuid(), filter, data, requiresBonding, writeType, listener, m_txnMngr.getCurrent(), getOverrideReadWritePriority());
-            }
+            final P_Task_Write task_write = new P_Task_Write(this, write, requiresBonding, m_txnMngr.getCurrent(), getOverrideReadWritePriority());
             queue().add(task_write);
         }
         else
         {
-            P_StripedWriteTransaction stripedTxn = new P_StripedWriteTransaction(data, characteristic, requiresBonding, filter, writeType, listener);
+            P_StripedWriteTransaction stripedTxn = new P_StripedWriteTransaction(write, requiresBonding, write.writeType);
             performTransaction(stripedTxn);
         }
     }
 
-    private ReadWriteListener.ReadWriteEvent disableNotify_private(UUID serviceUuid, UUID characteristicUuid, Double forceReadTimeout, DescriptorFilter descriptorFilter, ReadWriteListener listener)
+    private ReadWriteListener.ReadWriteEvent disableNotify_private(BleNotify notify)
     {
 
-        final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(serviceUuid, characteristicUuid, Uuids.INVALID, descriptorFilter, P_Const.EMPTY_FUTURE_DATA, Type.DISABLING_NOTIFICATION, ReadWriteListener.Target.CHARACTERISTIC);
+        final ReadWriteEvent earlyOutResult = serviceMngr_device().getEarlyOutEvent(notify, Type.DISABLING_NOTIFICATION, ReadWriteListener.Target.CHARACTERISTIC);
 
         if (earlyOutResult != null)
         {
-            invokeReadWriteCallback(listener, earlyOutResult);
+            invokeReadWriteCallback(notify.readWriteListener, earlyOutResult);
 
             return earlyOutResult;
         }
 
-        final BluetoothGattCharacteristic characteristic = getServiceManager().getCharacteristic(serviceUuid, characteristicUuid);
+        final BleCharacteristicWrapper characteristic = getServiceManager().getCharacteristic(notify.serviceUuid, notify.charUuid);
 
-        if (characteristic != null && is(CONNECTED))
+        if (!characteristic.isNull() && is(CONNECTED))
         {
-            final P_Task_ToggleNotify task;
-            if (descriptorFilter == null)
-            {
-                task = new P_Task_ToggleNotify(this, characteristic, /* enable= */false, m_txnMngr.getCurrent(), listener, getOverrideReadWritePriority());
-            }
-            else
-            {
-                task = new P_Task_ToggleNotify(this, serviceUuid, characteristicUuid, descriptorFilter, false, m_txnMngr.getCurrent(), listener, getOverrideReadWritePriority());
-            }
+            final P_Task_ToggleNotify task = new P_Task_ToggleNotify(this, notify, false, m_txnMngr.getCurrent(), getOverrideReadWritePriority());
             queue().add(task);
         }
 
-        m_pollMngr.stopPoll(serviceUuid, characteristicUuid, descriptorFilter, forceReadTimeout, listener, /* usingNotify= */true);
+        m_pollMngr.stopPoll(notify.serviceUuid, notify.charUuid, notify.descriptorFilter, notify.m_forceReadTimeout.secs(), notify.readWriteListener, /* usingNotify= */true);
 
         return NULL_READWRITE_EVENT();
     }
@@ -6727,9 +5365,9 @@ public final class BleDevice extends BleNode
             postEventAsCallback(listener_nullable, event);
         }
 
-        if (m_defaultReadWriteListener != null)
+        if (getListener_ReadWrite() != null)
         {
-            postEventAsCallback(m_defaultReadWriteListener, event);
+            postEventAsCallback(getListener_ReadWrite(), event);
         }
 
         if (getManager() != null && getManager().m_defaultReadWriteListener != null)
@@ -6737,12 +5375,14 @@ public final class BleDevice extends BleNode
             postEventAsCallback(getManager().m_defaultReadWriteListener, event);
         }
 
-        if (m_defaultNotificationListener != null && (event.type().isNotification() || event.type() == Type.DISABLING_NOTIFICATION || event.type() == Type.ENABLING_NOTIFICATION))
+        final boolean isNotificationType = (event.type().isNotification() || event.type() == Type.DISABLING_NOTIFICATION || event.type() == Type.ENABLING_NOTIFICATION);
+
+        if (getListener_Notification() != null && isNotificationType)
         {
-            postEventAsCallback(m_defaultNotificationListener, fromReadWriteEvent(event));
+            postEventAsCallback(getListener_Notification(), fromReadWriteEvent(event));
         }
 
-        if (getManager() != null && getManager().m_defaultNotificationListener != null)
+        if (getManager() != null && getManager().m_defaultNotificationListener != null && isNotificationType)
         {
             postEventAsCallback(getManager().m_defaultNotificationListener, fromReadWriteEvent(event));
         }
@@ -6759,7 +5399,7 @@ public final class BleDevice extends BleNode
                 type = NotificationListener.Type.INDICATION;
                 break;
             case PSUEDO_NOTIFICATION:
-                type = NotificationListener.Type.PSUEDO_NOTIFICATION;
+                type = NotificationListener.Type.PSEUDO_NOTIFICATION;
                 break;
             case DISABLING_NOTIFICATION:
                 type = NotificationListener.Type.DISABLING_NOTIFICATION;
@@ -6829,14 +5469,14 @@ public final class BleDevice extends BleNode
         return m_nullReadWriteEvent;
     }
 
-    final ConnectionFailListener.ConnectionFailEvent NULL_CONNECTIONFAIL_INFO()
+    final ConnectFailEvent NULL_CONNECTIONFAIL_INFO()
     {
         if (m_nullConnectionFailEvent != null)
         {
             return m_nullConnectionFailEvent;
         }
 
-        m_nullConnectionFailEvent = ConnectionFailListener.ConnectionFailEvent.NULL(this);
+        m_nullConnectionFailEvent = ConnectFailEvent.NULL(this);
 
         return m_nullConnectionFailEvent;
     }
@@ -6968,203 +5608,5 @@ public final class BleDevice extends BleNode
         }
     }
 
-
-
-
-    /**
-     * Builder class for sending a write over BLE. Use this class to set the service and/or characteristic
-     * UUIDs, and the data you'd like to write. This class provides convenience methods for sending
-     * booleans, ints, shorts, longs, and Strings. Use with {@link #write(WriteBuilder)},
-     * or {@link #write(WriteBuilder, ReadWriteListener)}.
-     *
-     * @deprecated - Use {@link com.idevicesinc.sweetblue.WriteBuilder} instead. This will be removed in v 3.0
-     */
-    @Deprecated
-    public static class WriteBuilder
-    {
-
-        UUID serviceUUID = null;
-        UUID charUUID = null;
-        FutureData data = null;
-        DescriptorFilter descriptorFilter;
-        boolean bigEndian = true;
-
-
-        /**
-         * Basic constructor. You must at the very least call {@link #setCharacteristicUUID(UUID)}, and one of the
-         * methods that add data ({@link #setBytes(byte[])}, {@link #setInt(int)}, etc..) before attempting to
-         * send the write.
-         */
-        public WriteBuilder()
-        {
-            this(/*bigEndian*/true, null, null);
-        }
-
-        /**
-         * Overload of {@link com.idevicesinc.sweetblue.BleDevice.WriteBuilder#BleDevice.WriteBuilder(boolean, UUID, UUID)}. If @param isBigEndian is true,
-         *
-         * @param isBigEndian - if <code>true</code>, then when using {@link #setInt(int)}, {@link #setShort(short)},
-         *                    or {@link #setLong(long)}, SweetBlue will reverse the bytes for you.
-         */
-        public WriteBuilder(boolean isBigEndian)
-        {
-            this(isBigEndian, null, null);
-        }
-
-        /**
-         * Overload of {@link  com.idevicesinc.sweetblue.BleDevice.WriteBuilder#BleDevice.WriteBuilder(boolean, UUID, UUID)}. If @param isBigEndian is true,
-         *
-         * @param isBigEndian - if <code>true</code>, then when using {@link #setInt(int)}, {@link #setShort(short)},
-         *                    or {@link #setLong(long)}, SweetBlue will reverse the bytes for you.
-         */
-        public WriteBuilder(boolean isBigEndian, UUID characteristicUUID)
-        {
-            this(isBigEndian, null, characteristicUUID);
-        }
-
-        /**
-         * Overload of {@link com.idevicesinc.sweetblue.BleDevice.WriteBuilder#BleDevice.WriteBuilder(boolean, UUID, UUID)}.
-         */
-        public WriteBuilder(UUID characteristicUUID)
-        {
-            this(/*bigendian*/true, null, characteristicUUID);
-        }
-
-        /**
-         * Overload of {@link com.idevicesinc.sweetblue.BleDevice.WriteBuilder#BleDevice.WriteBuilder(boolean, UUID, UUID)}.
-         */
-        public WriteBuilder(UUID serviceUUID, UUID characteristicUUID)
-        {
-            this(/*bigendian*/true, serviceUUID, characteristicUUID);
-        }
-
-        /**
-         * Overload of {@link com.idevicesinc.sweetblue.BleDevice.WriteBuilder#BleDevice.WriteBuilder(boolean, UUID, UUID, DescriptorFilter)}.
-         */
-        public WriteBuilder(boolean isBigEndian, UUID serviceUUID, UUID characteristicUUID)
-        {
-            this(isBigEndian, serviceUUID, characteristicUUID, null);
-        }
-
-        /**
-         * Main constructor to use. All other constructors overload this one.
-         *
-         * @param isBigEndian - if <code>true</code>, then when using {@link #setInt(int)}, {@link #setShort(short)},
-         *                    or {@link #setLong(long)}, SweetBlue will reverse the bytes for you.
-         */
-        public WriteBuilder(boolean isBigEndian, UUID serviceUUID, UUID characteristicUUID, DescriptorFilter descriptorFilter)
-        {
-            bigEndian = isBigEndian;
-            this.serviceUUID = serviceUUID;
-            charUUID = characteristicUUID;
-            this.descriptorFilter = descriptorFilter;
-        }
-
-
-        /**
-         * Set the service UUID for this write. This is only needed when you have characteristics with identical uuids under different services.
-         */
-        public final WriteBuilder setServiceUUID(UUID uuid)
-        {
-            serviceUUID = uuid;
-            return this;
-        }
-
-        /**
-         * Set the characteristic UUID to write to.
-         */
-        public final WriteBuilder setCharacteristicUUID(UUID uuid)
-        {
-            charUUID = uuid;
-            return this;
-        }
-
-        /**
-         * Set the raw bytes to write.
-         */
-        public final WriteBuilder setBytes(byte[] data)
-        {
-            this.data = new PresentData(data);
-            return this;
-        }
-
-        /**
-         * Set the boolean to write.
-         */
-        public final WriteBuilder setBoolean(boolean value)
-        {
-            data = new PresentData(value ? new byte[]{0x1} : new byte[]{0x0});
-            return this;
-        }
-
-        /**
-         * Set an int to be written.
-         */
-        public final WriteBuilder setInt(int val)
-        {
-            final byte[] d = Utils_Byte.intToBytes(val);
-            if (bigEndian)
-            {
-                Utils_Byte.reverseBytes(d);
-            }
-            data = new PresentData(d);
-            return this;
-        }
-
-        /**
-         * Set a short to be written.
-         */
-        public final WriteBuilder setShort(short val)
-        {
-            final byte[] d = Utils_Byte.shortToBytes(val);
-            if (bigEndian)
-            {
-                Utils_Byte.reverseBytes(d);
-            }
-            data = new PresentData(d);
-            return this;
-        }
-
-        /**
-         * Set a long to be written.
-         */
-        public final WriteBuilder setLong(long val)
-        {
-            final byte[] d = Utils_Byte.longToBytes(val);
-            if (bigEndian)
-            {
-                Utils_Byte.reverseBytes(d);
-            }
-            data = new PresentData(d);
-            return this;
-        }
-
-        /**
-         * Set a string to be written. This method also allows you to specify the string encoding. If the encoding
-         * fails, then {@link String#getBytes()} is used instead, which uses "UTF-8" by default.
-         */
-        public final WriteBuilder setString(String value, String stringEncoding)
-        {
-            byte[] bytes;
-            try
-            {
-                bytes = value.getBytes(stringEncoding);
-            } catch (UnsupportedEncodingException e)
-            {
-                bytes = value.getBytes();
-            }
-            data = new PresentData(bytes);
-            return this;
-        }
-
-        /**
-         * Set a string to be written. This defaults to "UTF-8" encoding.
-         */
-        public final WriteBuilder setString(String value)
-        {
-            return setString(value, "UTF-8");
-        }
-
-    }
 
 }

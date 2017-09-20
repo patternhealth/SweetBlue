@@ -5,9 +5,6 @@ import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
-import android.os.Build;
-
-import com.idevicesinc.sweetblue.compat.K_Util;
 
 import java.util.List;
 import java.util.UUID;
@@ -51,9 +48,9 @@ final class P_BleDeviceLayerManager
         return m_gattLayer.getNativeServiceList(m_device.logger());
     }
 
-    public final BluetoothGattService getService(UUID serviceUuid)
+    public final BleServiceWrapper getService(UUID serviceUuid)
     {
-        return m_gattLayer.getService(serviceUuid, m_device.logger());
+        return m_gattLayer.getBleService(serviceUuid, m_device.logger());
     }
 
     public final boolean isGattNull()
@@ -98,7 +95,7 @@ final class P_BleDeviceLayerManager
 
     public final boolean createBondSneaky(String methodName)
     {
-        return m_deviceLayer.createBondSneaky(methodName, m_device.getManager().m_config.loggingEnabled);
+        return m_deviceLayer.createBondSneaky(methodName, m_device.getManager().getLogger().isEnabled());
     }
 
     public final boolean startDiscovery()

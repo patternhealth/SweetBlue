@@ -1,16 +1,12 @@
 package com.idevicesinc.sweetblue;
 
 import com.idevicesinc.sweetblue.utils.GattDatabase;
-import com.idevicesinc.sweetblue.utils.Util;
-
+import com.idevicesinc.sweetblue.utils.Util_Unit;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
-
 import java.util.UUID;
-import java.util.concurrent.Semaphore;
-
 import static org.junit.Assert.assertTrue;
 
 
@@ -28,18 +24,12 @@ public class OtaTest extends BaseBleUnitTest
     @Test
     public void otaTest() throws Exception
     {
-        BleDevice device = m_mgr.newDevice(Util.randomMacAddress());
+        BleDevice device = m_mgr.newDevice(Util_Unit.randomMacAddress());
 
-        device.connect(new BleDevice.StateListener()
+        device.connect(e ->
         {
-            @Override
-            public void onEvent(StateEvent e)
-            {
-                if (e.didEnter(BleDeviceState.INITIALIZED))
-                {
-                    e.device().performOta(new TestOta());
-                }
-            }
+            assertTrue(e.wasSuccess());
+            e.device().performOta(new TestOta());
         });
         startTest();
     }
@@ -51,22 +41,21 @@ public class OtaTest extends BaseBleUnitTest
         @Override
         protected void start(BleDevice device)
         {
-            device.write(m_serviceUuid, m_charUuid, Util.randomBytes(10), new BleDevice.ReadWriteListener()
-            {
-                @Override
-                public void onEvent(ReadWriteEvent e)
-                {
-                    assertTrue(e.wasSuccess());
-                    e.device().write(m_serviceUuid, m_charUuid, Util.randomBytes(10), new BleDevice.ReadWriteListener()
-                    {
-                        @Override
-                        public void onEvent(ReadWriteEvent e)
-                        {
-                            assertTrue(e.wasSuccess());
-                            OtaTest.this.succeed();
-                        }
+            final BleWrite bleWrite = new BleWrite(m_serviceUuid, m_charUuid).setBytes(Util_Unit.randomBytes(10));
+            device.write(bleWrite, e -> {
+
+                assertTrue(e.wasSuccess());
+                bleWrite.setBytes(Util_Unit.randomBytes(10));
+                device.write(bleWrite, e1 -> {
+
+                    assertTrue(e1.wasSuccess());
+                    bleWrite.setBytes(Util_Unit.randomBytes(10));
+                    device.write(bleWrite, e2 -> {
+
+                        assertTrue(e2.wasSuccess());
+                        OtaTest.this.succeed();
                     });
-                }
+                });
             });
         }
     }
@@ -75,16 +64,9 @@ public class OtaTest extends BaseBleUnitTest
     public BleManagerConfig getConfig()
     {
         BleManagerConfig config = super.getConfig();
-        config.loggingEnabled = true;
+        config.loggingOptions = LogOptions.ON;
         config.runOnMainThread = false;
-        config.gattLayerFactory = new P_GattLayerFactory()
-        {
-            @Override
-            public P_GattLayer newInstance(BleDevice device)
-            {
-                return new UnitTestGatt(device, db);
-            }
-        };
+        config.gattLayerFactory = device -> new UnitTestGatt(device, db);
         return config;
     }
 

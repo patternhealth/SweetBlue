@@ -18,16 +18,16 @@ import android.bluetooth.BluetoothGatt;
 public final class BleStatuses
 {
 	/**
-	 * Status code used for {@link BleDevice.ReadWriteListener.ReadWriteEvent#gattStatus()} when the operation failed at a point where a
+	 * Status code used for {@link ReadWriteListener.ReadWriteEvent#gattStatus()} when the operation failed at a point where a
 	 * gatt status from the underlying stack isn't provided or applicable.
 	 * <br><br>
-	 * Also used for {@link BleDevice.ConnectionFailListener.ConnectionFailEvent#gattStatus()} for when the failure didn't involve the gatt layer.
+	 * Also used for {@link DeviceConnectionFailListener.ConnectionFailEvent#gattStatus()} for when the failure didn't involve the gatt layer.
 	 */
 	public static final int GATT_STATUS_NOT_APPLICABLE 					= -1;
 	
 	/**
-	 * Used on {@link BleDevice.BondListener.BondEvent#failReason()} when {@link BleDevice.BondListener.BondEvent#status()}
-	 * isn't applicable, for example {@link BleDevice.BondListener.Status#SUCCESS}.
+	 * Used on {@link BondListener.BondEvent#failReason()} when {@link BondListener.BondEvent#status()}
+	 * isn't applicable, for example {@link BondListener.Status#SUCCESS}.
 	 */
 	public static final int BOND_FAIL_REASON_NOT_APPLICABLE				= GATT_STATUS_NOT_APPLICABLE;
 
@@ -39,7 +39,7 @@ public final class BleStatuses
 
 
 	/**
-	 * Status code used for {@link BleServer.AdvertisingListener.AdvertisingEvent#status()} when advertising has been
+	 * Status code used for {@link AdvertisingListener.AdvertisingEvent#status()} when advertising has been
 	 * successfully started.
 	 */
 	public static final int ADVERTISE_SUCCESS = 0;

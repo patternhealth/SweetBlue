@@ -4,18 +4,18 @@ import java.util.UUID;
 import android.bluetooth.BluetoothDevice;
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.os.Build;
-import com.idevicesinc.sweetblue.BleDevice.BondListener;
-import com.idevicesinc.sweetblue.BleDevice.ConnectionFailListener;
-import com.idevicesinc.sweetblue.BleDevice.ReadWriteListener;
-import com.idevicesinc.sweetblue.BleManager.DiscoveryListener.DiscoveryEvent;
-import com.idevicesinc.sweetblue.BleManager.DiscoveryListener.LifeCycle;
+
 import com.idevicesinc.sweetblue.annotations.Advanced;
+import com.idevicesinc.sweetblue.DiscoveryListener.DiscoveryEvent;
+import com.idevicesinc.sweetblue.DiscoveryListener.LifeCycle;
 import com.idevicesinc.sweetblue.annotations.Extendable;
 import com.idevicesinc.sweetblue.annotations.Nullable;
 import com.idevicesinc.sweetblue.annotations.Immutable;
 import com.idevicesinc.sweetblue.annotations.Nullable.Prevalence;
+import com.idevicesinc.sweetblue.impl.DefaultDeviceReconnectFilter;
+import com.idevicesinc.sweetblue.impl.DefaultReconnectFilter;
 import com.idevicesinc.sweetblue.utils.*;
+import org.json.JSONObject;
 
 /**
  * Provides a number of options to (optionally) pass to {@link BleDevice#setConfig(BleDeviceConfig)}.
@@ -102,6 +102,15 @@ public class BleDeviceConfig extends BleNodeConfig implements Cloneable
 	public boolean forceBondDialog								= false;
 
 	/**
+	 * Default is {@link Interval#ONE_SEC}. This setting only applies if {@link #forceBondDialog} is <code>true</code>. This sets the amount of time to run the classic
+	 * scan for before attempting to bond. If this is set to {@link Interval#DISABLED}, or is <code>null</code>, and {@link #forceBondDialog} is set to <code>true</code>,
+	 * then the default value will be used.
+	 *
+	 * @see #forceBondDialog
+	 */
+	public Interval forceBondHackInterval						= Interval.ONE_SEC;
+
+	/**
 	 * Default is {@link #DEFAULT_GATT_REFRESH_DELAY}. This only applies when {@link #useGattRefresh} is <code>true</code>. This is the amount of time to delay after
 	 * refreshing the gatt database before actually performing the discover services operation. It has been observed that this delay
 	 * alleviates some instability when {@link #useGattRefresh} is <code>true</code>.
@@ -141,6 +150,20 @@ public class BleDeviceConfig extends BleNodeConfig implements Cloneable
 	 */
 	@Nullable(Prevalence.NORMAL)
 	public Boolean saveNameChangesToDisk						= true;
+
+	/**
+	 * Default is an instance of {@link DefaultReconnectFilter} using the timings that are <code>public static final</code> members thereof - set your own implementation here to
+	 * have fine-grain control over reconnect behavior while a device is {@link BleDeviceState#RECONNECTING_LONG_TERM} or {@link BleDeviceState#RECONNECTING_SHORT_TERM}.
+	 * This is basically how often and how long the library attempts to reconnect to a device that for example may have gone out of range. Set this variable to
+	 * <code>null</code> if reconnect behavior isn't desired. If not <code>null</code>, your app may find
+	 * {@link BleManagerConfig#manageCpuWakeLock} useful in order to force the app/phone to stay awake while attempting a reconnect.
+	 *
+	 * @see BleManagerConfig#manageCpuWakeLock
+	 * @see ReconnectFilter
+	 * @see DefaultReconnectFilter
+	 */
+	@Nullable(Nullable.Prevalence.NORMAL)
+	public ReconnectFilter reconnectFilter						= new DefaultDeviceReconnectFilter();
 	
 	/**
 	 * Default is <code>true</code> - whether to automatically get services immediately after a {@link BleDevice} is
@@ -164,8 +187,8 @@ public class BleDeviceConfig extends BleNodeConfig implements Cloneable
 	public boolean autoNegotiateMtuOnReconnect					= true;
 	
 	/**
-	 * Default is <code>false</code> - if <code>true</code> and you call {@link BleDevice#startPoll(UUID, Interval, BleDevice.ReadWriteListener)}
-	 * or {@link BleDevice#startChangeTrackingPoll(UUID, Interval, BleDevice.ReadWriteListener)()} with identical
+	 * Default is <code>false</code> - if <code>true</code> and you call {@link BleDevice#startPoll(UUID, Interval, ReadWriteListener)}
+	 * or {@link BleDevice#startChangeTrackingPoll(UUID, Interval, ReadWriteListener)()} with identical
 	 * parameters then two identical polls would run which would probably be wasteful and unintentional.
 	 * This option provides a defense against that situation.
 	 */
@@ -235,7 +258,7 @@ public class BleDeviceConfig extends BleNodeConfig implements Cloneable
 	
 	/**
 	 * Default is <code>true</code> - controls whether a {@link BleDevice} is placed into an in-memory cache when it becomes {@link BleDeviceState#UNDISCOVERED}.
-	 * If <code>true</code>, subsequent calls to {@link BleManager.DiscoveryListener#onEvent(BleManager.DiscoveryListener.DiscoveryEvent)} with
+	 * If <code>true</code>, subsequent calls to {@link DiscoveryListener#onEvent(Event)} with
 	 * {@link LifeCycle#DISCOVERED} (or calls to {@link BleManager#newDevice(String)}) will return the cached {@link BleDevice} instead of creating a new one.
 	 * <br><br>
 	 * The advantages of caching are:<br>
@@ -253,8 +276,8 @@ public class BleDeviceConfig extends BleNodeConfig implements Cloneable
 	public Boolean cacheDeviceOnUndiscovery						= true;
 	
 	/**
-	 * Default is <code>true</code> - controls whether {@link BleDevice.ConnectionFailListener.Status#BONDING_FAILED} is capable of
-	 * inducing {@link ConnectionFailListener#onEvent(com.idevicesinc.sweetblue.BleDevice.ConnectionFailListener.ConnectionFailEvent)}
+	 * Default is <code>true</code> - controls whether {@link DeviceReconnectFilter.Status#BONDING_FAILED} is capable of
+	 * inducing {@link DeviceReconnectFilter#onConnectFailed(ReconnectFilter.ConnectFailEvent)}
 	 * while a device is {@link BleDeviceState#CONNECTING_OVERALL}.
 	 */
 	@Nullable(Prevalence.NORMAL)
@@ -269,6 +292,13 @@ public class BleDeviceConfig extends BleNodeConfig implements Cloneable
 	@com.idevicesinc.sweetblue.annotations.Advanced
 	@Nullable(Prevalence.NORMAL)
 	public Boolean useGattRefresh								= false;
+
+	/**
+	 * Default is {@link RefreshOption#BEFORE_SERVICE_DISCOVERY} - This determines when SweetBlue will refresh the gatt database.
+	 * This only applies if you have set {@link #useGattRefresh} to <code>true</code>.
+	 */
+	public RefreshOption gattRefreshOption						= RefreshOption.BEFORE_SERVICE_DISCOVERY;
+
 
 	/**
 	 * Default is <code>null</code> - whether SweetBlue should retry a connect <i>after</i> successfully connecting via
@@ -305,6 +335,15 @@ public class BleDeviceConfig extends BleNodeConfig implements Cloneable
 	 */
 	@Advanced
 	public BondRetryFilter bondRetryFilter						= new BondRetryFilter.DefaultBondRetryFilter();
+
+	/**
+	 * Default is <code>true</code> - By default SweetBlue will force a bond/unbond for certain phones (mostly Sony, Motorola) because it has been found to
+	 * improve connection rates with them, see {@link BondFilter} docs. This option is here in the case you don't want this behavior (for instance, the BLE
+	 * device you're connecting to needs a pairing dialog to come up). However, you should use this at your own risk because it may make further connections
+	 * to the device less reliable.
+	 */
+	@Advanced
+	public Boolean autoBondFixes								= true;
 	
 	/**
 	 * Default is {@link #DEFAULT_MINIMUM_SCAN_TIME} seconds - Undiscovery of devices must be
@@ -315,7 +354,7 @@ public class BleDeviceConfig extends BleNodeConfig implements Cloneable
 	 * <br><br>
 	 * Use {@link Interval#DISABLED} to disable undiscovery altogether.
 	 * 
-	 * @see BleManager.DiscoveryListener#onEvent(DiscoveryEvent)
+	 * @see DiscoveryListener#onEvent(Event)
 	 * @see #undiscoveryKeepAlive
 	 */
 	@Nullable(Prevalence.NORMAL)
@@ -330,7 +369,7 @@ public class BleDeviceConfig extends BleNodeConfig implements Cloneable
 	 * <br><br>
 	 * Use {@link Interval#DISABLED} to disable undiscovery altogether.
 	 * 
-	 * @see BleManager.DiscoveryListener#onEvent(DiscoveryEvent)
+	 * @see DiscoveryListener#onEvent(Event)
 	 * @see #minScanTimeNeededForUndiscovery
 	 */
 	@Nullable(Prevalence.NORMAL)
@@ -441,206 +480,27 @@ public class BleDeviceConfig extends BleNodeConfig implements Cloneable
 
 	/**
 	 * Default is {@link #DEFAULT_MAX_CONNECTION_FAIL_HISTORY_SIZE} - This sets the size of the list that tracks the history
-	 * of {@link com.idevicesinc.sweetblue.BleNode.ConnectionFailListener.ConnectionFailEvent}s. Note that this will always be
+	 * of {@link com.idevicesinc.sweetblue.ReconnectFilter.ConnectFailEvent}s. Note that this will always be
 	 * at least 1. If set to anything lower, it will be ignored, and the max size will be 1.
 	 */
 	public int maxConnectionFailHistorySize									= DEFAULT_MAX_CONNECTION_FAIL_HISTORY_SIZE;
 
 	/**
-	 * As of now there are two main default uses for this class...
-	 * <br><br>
-	 * The first is that in at least some cases it's not possible to determine beforehand whether a given characteristic requires
-	 * bonding, so implementing this interface on {@link BleManagerConfig#bondFilter} lets the app give
-	 * a hint to the library so it can bond before attempting to read or write an encrypted characteristic.
-	 * Providing these hints lets the library handle things in a more deterministic and optimized fashion, but is not required.
-	 * <br><br>
-	 * The second is that some android devices have issues when it comes to bonding. So far the worst culprits
-	 * are certain Sony and Motorola phones, so if it looks like {@link Build#MANUFACTURER}
-	 * is either one of those, {@link DefaultBondFilter} is set to unbond upon discoveries and disconnects.
-	 * Please look at the source of {@link DefaultBondFilter} for the most up-to-date spec.
-	 * The problem seems to be associated with mismanagement of pairing keys by the OS and
-	 * this brute force solution seems to be the only way to smooth things out.
+	 * Enumeration used with {@link #useGattRefresh}. This specifies where SweetBlue will refresh the gatt database for a device.
 	 */
-	@com.idevicesinc.sweetblue.annotations.Advanced
-	@com.idevicesinc.sweetblue.annotations.Lambda
-	public static interface BondFilter
+	public enum RefreshOption
 	{
 		/**
-		 * Just a dummy subclass of {@link BleDevice.StateListener.StateEvent} so that this gets auto-imported for implementations of {@link BondFilter}.
+		 * The gatt database will be refreshed after connecting, and before service discovery. This is the original behavior (and current
+		 * default) of the library.
 		 */
-		@com.idevicesinc.sweetblue.annotations.Advanced
-		public static class StateChangeEvent extends BleDevice.StateListener.StateEvent
-		{
-			StateChangeEvent(BleDevice device, int oldStateBits, int newStateBits, int intentMask, int gattStatus)
-			{
-				super(device, oldStateBits, newStateBits, intentMask, gattStatus);
-			}
-		}
+		BEFORE_SERVICE_DISCOVERY,
 
 		/**
-		 * An enumeration of the type of characteristic operation for a {@link CharacteristicEvent}.
+		 * The gatt database will be refreshed after disconnecting from a device. It's been found that at least some devices connect better
+		 * when the database is refreshed prior to connecting, if you have connected at least once already.
 		 */
-		@com.idevicesinc.sweetblue.annotations.Advanced
-		public static enum CharacteristicEventType
-		{
-			/**
-			 * Started from {@link BleDevice#read(UUID, ReadWriteListener)}, {@link BleDevice#startPoll(UUID, Interval, ReadWriteListener)}, etc.
-			 */
-			READ,
-
-			/**
-			 * Started from {@link BleDevice#write(UUID, byte[], ReadWriteListener)} or overloads.
-			 */
-			WRITE,
-
-			/**
-			 * Started from {@link BleDevice#enableNotify(UUID, ReadWriteListener)} or overloads.
-			 */
-			ENABLE_NOTIFY;
-		}
-
-		/**
-		 * Struct passed to {@link BondFilter#onEvent(CharacteristicEvent)}.
-		 */
-		@com.idevicesinc.sweetblue.annotations.Advanced
-		@Immutable
-		public static class CharacteristicEvent extends Event
-		{
-			/**
-			 * Returns the {@link BleDevice} in question.
-			 */
-			public BleDevice device(){  return m_device;  }
-			private final BleDevice m_device;
-
-			/**
-			 * Convience to return the mac address of {@link #device()}.
-			 */
-			public String macAddress()  {  return m_device.getMacAddress();  }
-
-			/**
-			 * Returns the {@link UUID} of the characteristic in question.
-			 */
-			public UUID charUuid(){  return m_uuid;  }
-			private final UUID m_uuid;
-
-			/**
-			 * Returns the type of characteristic operation, read, write, etc.
-			 */
-			public CharacteristicEventType type(){  return m_type;  }
-			private final CharacteristicEventType m_type;
-
-			CharacteristicEvent(BleDevice device, UUID uuid, CharacteristicEventType type)
-			{
-				m_device = device;
-				m_uuid = uuid;
-				m_type = type;
-			}
-
-			@Override public String toString()
-			{
-				return Utils_String.toString
-				(
-					this.getClass(),
-					"device",		device().getName_debug(),
-					"charUuid",		device().getManager().getLogger().charName(charUuid()),
-					"type",			type()
-				);
-			}
-		}
-
-		/**
-		 * Return value for the various interface methods of {@link BondFilter}.
-		 * Use static constructor methods to create instances.
-		 */
-		@com.idevicesinc.sweetblue.annotations.Advanced
-		@Immutable
-		public static class Please
-		{
-			private final Boolean m_bond;
-			private final BondListener m_bondListener;
-
-			Please(Boolean bond, BondListener listener)
-			{
-				m_bond = bond;
-				m_bondListener = listener;
-			}
-
-			Boolean bond_private()
-			{
-				return m_bond;
-			}
-
-			BondListener listener()
-			{
-				return m_bondListener;
-			}
-
-			/**
-			 * Device should be bonded if it isn't already.
-			 */
-			public static Please bond()
-			{
-				return new Please(true, null);
-			}
-
-			/**
-			 * Returns {@link #bond()} if the given condition holds <code>true</code>, {@link #doNothing()} otherwise.
-			 */
-			public static Please bondIf(boolean condition)
-			{
-				return condition ? bond() : doNothing();
-			}
-
-			/**
-			 * Same as {@link #bondIf(boolean)} but lets you pass a {@link BondListener} as well.
-			 */
-			public static Please bondIf(boolean condition, BondListener listener)
-			{
-				return condition ? bond(listener) : doNothing();
-			}
-
-			/**
-			 * Same as {@link #bond()} but lets you pass a {@link BondListener} as well.
-			 */
-			public static Please bond(BondListener listener)
-			{
-				return new Please(true, listener);
-			}
-
-			/**
-			 * Device should be unbonded if it isn't already.
-			 */
-			public static Please unbond()
-			{
-				return new Please(false, null);
-			}
-
-			/**
-			 * Returns {@link #bond()} if the given condition holds <code>true</code>, {@link #doNothing()} otherwise.
-			 */
-			public static Please unbondIf(boolean condition)
-			{
-				return condition ? unbond() : doNothing();
-			}
-
-			/**
-			 * Device's bond state should not be affected.
-			 */
-			public static Please doNothing()
-			{
-				return new Please(null, null);
-			}
-		}
-
-		/**
-		 * Called after a device undergoes a change in its {@link BleDeviceState}.
-		 */
-		Please onEvent(StateChangeEvent e);
-
-		/**
-		 * Called immediately before reading, writing, or enabling notification on a characteristic.
-		 */
-		Please onEvent(CharacteristicEvent e);
+		AFTER_DISCONNECTING
 	}
 
 	/**
@@ -694,6 +554,17 @@ public class BleDeviceConfig extends BleNodeConfig implements Cloneable
 	 */
 	public BleDeviceConfig()
 	{
+	}
+
+	/**
+	 * Creates a {@link BleDeviceConfig} with all default options set. Then, any configuration options
+	 * specified in the given JSONObject will be applied over the defaults.  See {@link BleNodeConfig#writeJSON}
+	 * regarding the creation of the JSONObject
+	 */
+	public BleDeviceConfig(JSONObject jo)
+	{
+		super();
+		readJSON(jo);
 	}
 	
 	/**

@@ -3,14 +3,18 @@ package com.idevicesinc.sweetblue;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.os.Build;
+import android.util.Log;
 
 import com.idevicesinc.sweetblue.compat.L_Util;
 import com.idevicesinc.sweetblue.utils.Interval;
 import com.idevicesinc.sweetblue.utils.Utils;
 import com.idevicesinc.sweetblue.utils.Utils_String;
-
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import static com.idevicesinc.sweetblue.BleManagerState.SCANNING;
 import static com.idevicesinc.sweetblue.BleManagerState.BOOST_SCANNING;
@@ -33,7 +37,7 @@ final class P_ScanManager
     private PostLollipopScanCallback m_postLollipopScanCallback;
     private AtomicReference<BleScanApi> mCurrentApi;
     private AtomicReference<BleScanPower> mCurrentPower;
-    private List<ScanInfo> m_scanEntries;
+    private Set<ScanInfo> m_scanEntries;
 
     private final int m_retryCountMax = 3;
     private boolean m_triedToStartScanAfterTurnedOn;
@@ -59,7 +63,7 @@ final class P_ScanManager
         m_manager = mgr;
         mCurrentApi = new AtomicReference<>(mgr.m_config.scanApi);
         mCurrentPower = new AtomicReference<>(BleScanPower.AUTO);
-        m_scanEntries = new ArrayList<>();
+        m_scanEntries = new HashSet<>();
         m_preLollipopScanCallback = new PreLollipopScanCallback();
         if(Utils.isLollipop())
         {
@@ -149,7 +153,7 @@ final class P_ScanManager
                 //			07-02 15:04:48.149: E/AndroidRuntime(24389): 	at android.bluetooth.BluetoothAdapter.stopLeScan(BluetoothAdapter.java:1722)
                 m_manager.getLogger().w(e.getStackTrace().toString());
 
-                m_manager.uhOh(BleManager.UhOhListener.UhOh.RANDOM_EXCEPTION);
+                m_manager.uhOh(UhOhListener.UhOh.RANDOM_EXCEPTION);
             }
         }
         else if ( m_mode == Mode_BLE_POST_LOLLIPOP)
@@ -162,7 +166,7 @@ final class P_ScanManager
             {
                 m_manager.getLogger().w(e.getStackTrace().toString());
 
-                m_manager.uhOh(BleManager.UhOhListener.UhOh.RANDOM_EXCEPTION);
+                m_manager.uhOh(UhOhListener.UhOh.RANDOM_EXCEPTION);
             }
         }
         else if( m_mode == Mode_CLASSIC )
@@ -215,7 +219,7 @@ final class P_ScanManager
         stopScan_private(false);
     }
 
-    final void postScanResult(final BluetoothDevice device, final int rssi, final byte[] scanRecord)
+    final void addScanResult(final BluetoothDevice device, final int rssi, final byte[] scanRecord)
     {
         final ScanInfo info = new ScanInfo(device, rssi, scanRecord);
         synchronized (entryLock)
@@ -224,13 +228,13 @@ final class P_ScanManager
         }
     }
 
-    final void postBatchScanResult(final List<L_Util.ScanResult> devices)
+    final void addBatchScanResults(final List<L_Util.ScanResult> devices)
     {
-        for (L_Util.ScanResult res : devices)
+        synchronized (entryLock)
         {
-            final ScanInfo info = new ScanInfo(res.getDevice(), res.getRssi(), res.getRecord());
-            synchronized (m_scanEntries)
+            for (L_Util.ScanResult res : devices)
             {
+                final ScanInfo info = new ScanInfo(res.getDevice(), res.getRssi(), res.getRecord());
                 m_scanEntries.add(info);
             }
         }
@@ -253,34 +257,11 @@ final class P_ScanManager
         {
             m_totalTimeScanning += timeStep;
             m_intervalTimeScanning += timeStep;
-            if ( m_scanEntries.size() > 0 )
-            {
-                final List<ScanInfo> infos;
-                synchronized (entryLock)
-                {
-                    infos = new ArrayList<>(m_scanEntries);
-                    m_scanEntries.clear();
-                }
-                for (ScanInfo info : infos)
-                {
-                    final P_NativeDeviceLayer layer = m_manager.m_config.newDeviceLayer(BleDevice.NULL);
-                    layer.setNativeDevice(info.m_device);
 
-                    //--- > RB This is here because it has been observed that on Samsung devices, the BluetoothDevice getName() method can return a different name
-                    //          here, versus before posting this Runnable. This hack prevents bad discoveries from getting piped up to app-level.
+            int size = m_scanEntries.size();
 
-//                    final String name2 = info.m_device != null ? info.m_device.getName() : null;
+            handleScanEntries(size);
 
-//                    if (name.value != null && name2 != null && !name.value.equals(name2))
-//                    {
-//                        return;
-//                    }
-
-                    m_manager.getCrashResolver().notifyScannedDevice(layer, m_preLollipopScanCallback);
-
-                    m_manager.onDiscoveredFromNativeStack(layer, info.m_rssi, info.m_record);
-                }
-            }
             if (!m_forceActualInfinite && m_doingInfiniteScan && Interval.isEnabled(m_manager.m_config.infiniteScanInterval) && m_intervalTimeScanning >= m_manager.m_config.infiniteScanInterval.secs())
             {
                 pauseScan();
@@ -426,6 +407,53 @@ final class P_ScanManager
 
 
 
+
+
+    private void handleScanEntries(int size)
+    {
+        if ( size > 0 )
+        {
+            final List<ScanInfo> infos;
+
+            // Get our max scan entries to process based off the update loop rate, with
+            // a minimum of 5.
+            final long upRate = m_manager.m_config.autoUpdateRate.millis();
+            final int maxEntries = (int) Math.min(size, Math.max(5, upRate));
+            infos = new ArrayList<>(maxEntries);
+            synchronized (entryLock)
+            {
+                int current = 0;
+                final Iterator<ScanInfo> it = m_scanEntries.iterator();
+                while (it.hasNext() && current < maxEntries)
+                {
+                    infos.add(it.next());
+                    it.remove();
+                    current++;
+                }
+            }
+
+            final List<DiscoveryEntry> entries = new ArrayList<>(infos.size());
+
+            for (ScanInfo info : infos)
+            {
+                final P_NativeDeviceLayer layer = m_manager.m_config.newDeviceLayer(BleDevice.NULL);
+                layer.setNativeDevice(info.m_device);
+
+                if (m_mode == Mode_BLE)
+                {
+                    m_manager.getCrashResolver().notifyScannedDevice(layer, m_preLollipopScanCallback, null);
+                }
+                else
+                {
+                    m_manager.getCrashResolver().notifyScannedDevice(layer, null, L_Util.getNativeCallback());
+                }
+
+                entries.add(DiscoveryEntry.newEntry(layer, info.m_rssi, info.m_record));
+            }
+
+            m_manager.onDiscoveredFromNativeStack(entries);
+        }
+    }
 
     private boolean startClassicDiscovery()
     {
@@ -625,7 +653,7 @@ final class P_ScanManager
 
                 fail();
 
-                m_manager.uhOh(BleManager.UhOhListener.UhOh.CLASSIC_DISCOVERY_FAILED);
+                m_manager.uhOh(UhOhListener.UhOh.CLASSIC_DISCOVERY_FAILED);
 
                 return false;
             }
@@ -633,7 +661,7 @@ final class P_ScanManager
             {
                 if (false == suppressUhOh)
                 {
-                    m_manager.uhOh(BleManager.UhOhListener.UhOh.START_BLE_SCAN_FAILED__USING_CLASSIC);
+                    m_manager.uhOh(UhOhListener.UhOh.START_BLE_SCAN_FAILED__USING_CLASSIC);
                 }
 
                 m_mode = Mode_CLASSIC;
@@ -646,7 +674,7 @@ final class P_ScanManager
         {
             fail();
 
-            m_manager.uhOh(BleManager.UhOhListener.UhOh.START_BLE_SCAN_FAILED);
+            m_manager.uhOh(UhOhListener.UhOh.START_BLE_SCAN_FAILED);
 
             return false;
         }
@@ -659,12 +687,20 @@ final class P_ScanManager
 
     private void startLScan(int mode)
     {
-        m_manager.managerLayer().startLScan(mode, m_manager.m_config.scanReportDelay, m_postLollipopScanCallback);
+        m_manager.managerLayer().startLScan(mode, getReportDelay(), m_postLollipopScanCallback);
     }
 
     private void startMScan(int mode)
     {
-        m_manager.managerLayer().startMScan(mode, m_manager.m_config.scanReportDelay, m_postLollipopScanCallback);
+        m_manager.managerLayer().startMScan(mode, getReportDelay(), m_postLollipopScanCallback);
+    }
+
+    private Interval getReportDelay()
+    {
+        Interval delay = m_manager.m_config.scanReportDelay;
+        if (Build.MODEL.toLowerCase().contains("pixel"))
+            delay = Interval.ZERO;
+        return delay;
     }
 
     private void fail()
@@ -700,6 +736,45 @@ final class P_ScanManager
 
 
 
+    static final class DiscoveryEntry
+    {
+        private final P_NativeDeviceLayer deviceLayer;
+        private final int rssi;
+        private final byte[] scanRecord;
+
+        BleDevice m_bleDevice;
+        BleDeviceOrigin m_origin;
+        ScanFilter.ScanEvent m_scanEvent;
+        boolean m_newlyDiscovered;
+
+
+        DiscoveryEntry(P_NativeDeviceLayer layer, int rssi, byte[] record)
+        {
+            deviceLayer = layer;
+            this.rssi = rssi;
+            scanRecord = record;
+        }
+
+        P_NativeDeviceLayer device()
+        {
+            return deviceLayer;
+        }
+
+        int rssi()
+        {
+            return rssi;
+        }
+
+        byte[] record()
+        {
+            return scanRecord;
+        }
+
+        static DiscoveryEntry newEntry(P_NativeDeviceLayer layer, int rssi, byte[] record)
+        {
+            return new DiscoveryEntry(layer, rssi, record);
+        }
+    }
 
     private final static class ScanInfo
     {
@@ -713,6 +788,31 @@ final class P_ScanManager
             m_rssi = rssi;
             m_record = record;
         }
+
+        @Override
+        public int hashCode()
+        {
+            if (m_device != null)
+            {
+                return m_device.getAddress().hashCode();
+            }
+            return super.hashCode();
+        }
+
+        @Override
+        public boolean equals(Object obj)
+        {
+            if (obj == null)
+                return false;
+            if (obj instanceof ScanInfo)
+            {
+                ScanInfo other = (ScanInfo) obj;
+                if ((m_device == null && other.m_device != null) || (m_device != null && other.m_device == null))
+                    return false;
+                return m_device.getAddress().equals(other.m_device.getAddress());
+            }
+            return false;
+        }
     }
 
     private final class PreLollipopScanCallback implements BluetoothAdapter.LeScanCallback
@@ -720,7 +820,9 @@ final class P_ScanManager
 
         @Override public void onLeScan(BluetoothDevice device, int rssi, byte[] scanRecord)
         {
-            postScanResult(device, rssi, scanRecord);
+            final String macAddress = device != null ? device.getAddress() : null;
+            m_manager.getLogger().log_native(Log.VERBOSE, macAddress, "Discovered new device via PRE-LOLLIPOP scan.");
+            addScanResult(device, rssi, scanRecord);
         }
     }
 
@@ -731,17 +833,27 @@ final class P_ScanManager
 
         @Override public void onScanResult(int callbackType, L_Util.ScanResult result)
         {
-            postScanResult(result.getDevice(), result.getRssi(), result.getRecord());
+            final String macAddress = result != null && result.getDevice() != null ? result.getDevice().getAddress() : null;
+            m_manager.getLogger().log_native(Log.VERBOSE, macAddress, "Discovered new device via POST-LOLLIPOP scan.");
+            addScanResult(result.getDevice(), result.getRssi(), result.getRecord());
         }
 
         @Override public void onBatchScanResults(List<L_Util.ScanResult> results)
         {
-            postBatchScanResult(results);
+            if (m_manager.getLogger().isEnabled())
+            {
+                for (L_Util.ScanResult res : results)
+                {
+                    final String macAddress = res != null && res.getDevice() != null ? res.getDevice().getAddress() : null;
+                    m_manager.getLogger().log_native(Log.VERBOSE, macAddress, "Discovered new device via POST-LOLLIPOP scan (batch).");
+                }
+            }
+            addBatchScanResults(results);
         }
 
         @Override public void onScanFailed(int errorCode)
         {
-            m_manager.getLogger().e(Utils_String.concatStrings("Post lollipop scan failed with error code ", String.valueOf(errorCode)));
+            m_manager.getLogger().e_native(Utils_String.concatStrings("Post lollipop scan failed with error code ", String.valueOf(errorCode)));
             if (errorCode != SCAN_FAILED_ALREADY_STARTED)
             {
                 fail();

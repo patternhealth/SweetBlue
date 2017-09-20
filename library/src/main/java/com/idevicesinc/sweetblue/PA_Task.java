@@ -14,7 +14,7 @@ abstract class PA_Task
 
 	private static final int ORDINAL_NOT_YET_ASSIGNED = -1;
 	
-	private static final BleNodeConfig.TaskTimeoutRequestFilter.TaskTimeoutRequestEvent s_timeoutRequestEvent = new BleNodeConfig.TaskTimeoutRequestFilter.TaskTimeoutRequestEvent();
+	private static final TaskTimeoutRequestFilter.TaskTimeoutRequestEvent s_timeoutRequestEvent = new TaskTimeoutRequestFilter.TaskTimeoutRequestEvent();
 
 	
 	private 	  BleDevice m_device;
@@ -340,7 +340,7 @@ abstract class PA_Task
 		return false;
 	}
 	
-	void update_internal(double timeStep)
+	void update_internal(double timeStep, long currentTime)
 	{
 		m_totalTimeArmedAndExecuting += timeStep;
 //			m_totalTimeQueuedAndArmedAndExecuting += timeStep;
@@ -355,7 +355,7 @@ abstract class PA_Task
 			{
 				if( !Interval.isDisabled(m_timeout) && m_timeout != Interval.INFINITE.secs() )
 				{
-					double timeExecuting = (System.currentTimeMillis() - m_resetableExecuteStartTime)/1000.0;
+					double timeExecuting = (currentTime - m_resetableExecuteStartTime)/1000.0;
 
 					if( timeExecuting >= m_timeout )
 					{

@@ -49,18 +49,18 @@ public enum BleTask
 	UNBOND,
 	
 	/**
-	 * Associated with {@link BleDevice#read(java.util.UUID, com.idevicesinc.sweetblue.BleDevice.ReadWriteListener)}.
+	 * Associated with {@link BleDevice#read(java.util.UUID, com.idevicesinc.sweetblue.ReadWriteListener)}.
 	 */
 	READ,
 	
 	/**
-	 * Associated with {@link BleDevice#write(java.util.UUID, byte[], com.idevicesinc.sweetblue.BleDevice.ReadWriteListener)}.
+	 * Associated with {@link BleDevice#write(java.util.UUID, byte[], com.idevicesinc.sweetblue.ReadWriteListener)}.
 	 */
 	WRITE,
 	
 	/**
-	 * Associated with {@link BleDevice#enableNotify(java.util.UUID, com.idevicesinc.sweetblue.BleDevice.ReadWriteListener)} and
-	 * {@link BleDevice#disableNotify(java.util.UUID, com.idevicesinc.sweetblue.BleDevice.ReadWriteListener)}.
+	 * Associated with {@link BleDevice#enableNotify(java.util.UUID, com.idevicesinc.sweetblue.ReadWriteListener)} and
+	 * {@link BleDevice#disableNotify(java.util.UUID, com.idevicesinc.sweetblue.ReadWriteListener)}.
 	 */
 	TOGGLE_NOTIFY,
 	
@@ -75,8 +75,8 @@ public enum BleTask
 	DISCOVER_SERVICES,
 
 	/**
-	 * Associated with sending a notification to a remote client through {@link BleServer#sendNotification(String, UUID, UUID, FutureData, BleServer.OutgoingListener)}
-	 * or {@link BleServer#sendIndication(String, UUID, UUID, FutureData, BleServer.OutgoingListener)} overloads.
+	 * Associated with sending a notification to a remote client through {@link BleServer#sendNotification(String, UUID, UUID, FutureData, OutgoingListener)}
+	 * or {@link BleServer#sendIndication(String, UUID, UUID, FutureData, OutgoingListener)} overloads.
 	 */
 	SEND_NOTIFICATION,
 
@@ -91,13 +91,13 @@ public enum BleTask
 	DISCONNECT_SERVER,
 
 	/**
-	 * Associated with {@link BleServer.IncomingListener.Please#respondWithSuccess()}, {@link BleServer.IncomingListener.Please#respondWithError(int)},
-	 * or various other static methods of {@link BleServer.IncomingListener.Please}.
+	 * Associated with {@link IncomingListener.Please#respondWithSuccess()}, {@link IncomingListener.Please#respondWithError(int)},
+	 * or various other static methods of {@link IncomingListener.Please}.
 	 */
 	SEND_READ_WRITE_RESPONSE,
 
 	/**
-	 * Associated with {@link BleServer#addService(BleService, BleServer.ServiceAddListener)} or overloads.
+	 * Associated with {@link BleServer#addService(BleService, AddServiceListener)} or overloads.
 	 */
 	ADD_SERVICE,
 
@@ -107,17 +107,17 @@ public enum BleTask
 	SET_MTU,
 
 	/**
-	 * Associated with {@link BleDevice#setConnectionPriority(BleConnectionPriority, BleDevice.ReadWriteListener)} or overloads.
+	 * Associated with {@link BleDevice#setConnectionPriority(BleConnectionPriority, ReadWriteListener)} or overloads.
 	 */
 	SET_CONNECTION_PRIORITY,
 
 	/**
-	 * Associated with {@link BleDevice#readDescriptor(UUID, UUID, BleDevice.ReadWriteListener)} or overloads.
+	 * Associated with {@link BleDevice#readDescriptor(UUID, UUID, ReadWriteListener)} or overloads.
 	 */
 	READ_DESCRIPTOR,
 
 	/**
-	 * Associated with {@link BleDevice#writeDescriptor(UUID, UUID, byte[], BleDevice.ReadWriteListener)} or overloads.
+	 * Associated with {@link BleDevice#writeDescriptor(UUID, UUID, byte[], ReadWriteListener)} or overloads.
 	 */
 	WRITE_DESCRIPTOR,
 
@@ -127,7 +127,7 @@ public enum BleTask
 	RELIABLE_WRITE,
 
 	/**
-	 * Associated with {@link BleServer#startAdvertising(BleAdvertisingPacket)}, {@link BleServer#startAdvertising(BleAdvertisingPacket, BleServer.AdvertisingListener)}
+	 * Associated with {@link BleServer#startAdvertising(BleAdvertisingPacket)}, {@link BleServer#startAdvertising(BleAdvertisingPacket, AdvertisingListener)}
 	 */
 	START_ADVERTISING,
 

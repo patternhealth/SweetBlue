@@ -1,15 +1,15 @@
 package com.idevicesinc.sweetblue;
 
+import static com.idevicesinc.sweetblue.BleManagerState.BLE_SCAN_READY;
 import static com.idevicesinc.sweetblue.BleManagerState.BOOST_SCANNING;
-import static com.idevicesinc.sweetblue.BleManagerState.IDLE;
 import static com.idevicesinc.sweetblue.BleManagerState.OFF;
 import static com.idevicesinc.sweetblue.BleManagerState.ON;
 import static com.idevicesinc.sweetblue.BleManagerState.SCANNING;
 import static com.idevicesinc.sweetblue.BleManagerState.SCANNING_PAUSED;
 import static com.idevicesinc.sweetblue.BleManagerState.STARTING_SCAN;
-
+import static com.idevicesinc.sweetblue.BleManagerState.TURNING_OFF;
+import static com.idevicesinc.sweetblue.BleManagerState.TURNING_ON;
 import com.idevicesinc.sweetblue.PA_StateTracker.E_Intent;
-
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.content.BroadcastReceiver;
@@ -17,13 +17,14 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.util.Log;
-
-import com.idevicesinc.sweetblue.BleManager.UhOhListener.UhOh;
+import com.idevicesinc.sweetblue.UhOhListener.UhOh;
 import com.idevicesinc.sweetblue.utils.Interval;
 import com.idevicesinc.sweetblue.utils.State;
 import com.idevicesinc.sweetblue.utils.Utils;
+import com.idevicesinc.sweetblue.utils.Utils_String;
 
-import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 
 
 final class P_BleManager_Listeners
@@ -57,13 +58,7 @@ final class P_BleManager_Listeners
                 {
                     if (state == PE_TaskState.INTERRUPTED)
                     {
-                        m_mngr.getPostManager().runOrPostToUpdateThread(new Runnable()
-                        {
-                            @Override public void run()
-                            {
-                                m_mngr.tryPurgingStaleDevices(totalTimeExecuting);
-                            }
-                        });
+                        m_mngr.getPostManager().runOrPostToUpdateThread(() -> m_mngr.tryPurgingStaleDevices(totalTimeExecuting));
                     }
                     else
                     {
@@ -107,6 +102,10 @@ final class P_BleManager_Listeners
             {
                 onClassicDiscoveryFinished();
             }
+            else if (action.equals(BluetoothDevice.ACTION_PAIRING_REQUEST))
+            {
+                onBondRequest(intent);
+            }
 
             //--- DRK > This block doesn't do anything...just wrote it to see how these other events work and if they're useful.
             //---		They don't seem to be but leaving it here for the future if needed anyway.
@@ -120,7 +119,7 @@ final class P_BleManager_Listeners
                 }
                 else if (action.equals(BluetoothDevice.ACTION_UUID))
                 {
-                    m_mngr.getLogger().d("");
+                    m_mngr.getLogger().d_native("Received BluetoothDevice.ACTION_UUID broadcast.");
                 }
 
                 BleDevice device = m_mngr.getDevice(device_native.getAddress());
@@ -136,6 +135,39 @@ final class P_BleManager_Listeners
             }
         }
     };
+
+    private void onBondRequest(Intent intent)
+    {
+        final P_NativeDeviceLayer layer = m_mngr.m_config.newDeviceLayer(BleDevice.NULL);
+
+        final BluetoothDevice device_native = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+
+        layer.setNativeDevice(device_native);
+
+        onNativeBondRequest(layer);
+    }
+
+    private void onNativeBondRequest(final P_NativeDeviceLayer device_native)
+    {
+        final String macAddress = device_native != null && device_native.getAddress() != null ? device_native.getAddress() : null;
+        m_mngr.getLogger().log_native(Log.INFO, macAddress, "Bond request served.");
+        m_mngr.getPostManager().runOrPostToUpdateThread(new Runnable()
+        {
+            @Override
+            public void run()
+            {
+                final BleDevice device = getDeviceFromNativeDevice(device_native);
+
+                if (device != null)
+                {
+                    if (device.getListeners() != null)
+                    {
+                        device.getListeners().onNativeBondRequest_updateThread(device);
+                    }
+                }
+            }
+        });
+    }
 
     private final BleManager m_mngr;
 
@@ -166,6 +198,8 @@ final class P_BleManager_Listeners
         intentFilter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECT_REQUESTED);
         intentFilter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
 
+        intentFilter.addAction(BluetoothDevice.ACTION_PAIRING_REQUEST);
+
         intentFilter.addAction(BluetoothDevice.ACTION_FOUND);
         intentFilter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
         intentFilter.addAction(BluetoothDevice.ACTION_UUID);
@@ -192,7 +226,7 @@ final class P_BleManager_Listeners
 
     private void onDeviceFound_classic(Context context, Intent intent)
     {
-        // If this was discovered via the hack to show the bond popup, then do not propogate this
+        // If this was discovered via the hack to show the bond popup, then do not propagate this
         // any further, as this scan is JUST to get the dialog to pop up (rather than show in the notification area)
         P_Task_BondPopupHack hack = m_mngr.getTaskQueue().getCurrent(P_Task_BondPopupHack.class, m_mngr);
 
@@ -201,12 +235,19 @@ final class P_BleManager_Listeners
         if (hack == null && scan != null && m_mngr.m_config.scanApi == BleScanApi.CLASSIC)
         {
             final BluetoothDevice device_native = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+
+            final String macAddress = device_native != null ? device_native.getAddress() : null;
+            m_mngr.getLogger().log_native(Log.VERBOSE, macAddress, "Discovered device via CLASSIC scan.");
+
             final int rssi = intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, Short.MIN_VALUE);
 
             final P_NativeDeviceLayer layer = m_mngr.m_config.newDeviceLayer(BleDevice.NULL);
             layer.setNativeDevice(device_native);
 
-            m_mngr.onDiscoveredFromNativeStack(layer, rssi, null);
+            final List<P_ScanManager.DiscoveryEntry> entries = new ArrayList<>(1);
+            entries.add(new P_ScanManager.DiscoveryEntry(layer, rssi, null));
+
+            m_mngr.onDiscoveredFromNativeStack(entries);
         }
     }
 
@@ -223,13 +264,13 @@ final class P_BleManager_Listeners
         m_mngr.getTaskQueue().interrupt(P_Task_Scan.class, m_mngr);
     }
 
-    private void onNativeBleStateChangeFromBroadcastReceiver(Context context, Intent intent)
+    final void onNativeBleStateChangeFromBroadcastReceiver(Context context, Intent intent)
     {
         final int previousNativeState = intent.getExtras().getInt(BluetoothAdapter.EXTRA_PREVIOUS_STATE);
         final int newNativeState = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
 
         int logLevel = newNativeState == BluetoothAdapter.ERROR || previousNativeState == BluetoothAdapter.ERROR ? Log.WARN : Log.INFO;
-        m_mngr.getLogger().log(logLevel, "previous=" + m_mngr.getLogger().gattBleState(previousNativeState) + " new=" + m_mngr.getLogger().gattBleState(newNativeState));
+        m_mngr.getLogger().log_native(logLevel, null, Utils_String.makeString("previous=", m_mngr.getLogger().gattBleState(previousNativeState), " new=", m_mngr.getLogger().gattBleState(newNativeState)));
 
         if (Utils.isMarshmallow())
         {
@@ -279,7 +320,7 @@ final class P_BleManager_Listeners
         //---		simply because where this is where it was first observed. Checking at the bottom
         //---		may not work because maybe this bug relied on a race condition.
         //---		UPDATE: Not checking for inconsistent state anymore cause it can be legitimate due to native
-        //---		state changing while call to this method is sitting on the main thread queue.
+        //---		state changing while call to this method is sitting on the update thread queue.
         final int adapterState = m_mngr.managerLayer().getState();
 
 //		boolean inconsistentState = adapterState != newNativeState;
@@ -313,6 +354,12 @@ final class P_BleManager_Listeners
             //---		sure all devices are cleared in case something weird happens and we go straight
             //---		from ON to OFF or something.
             m_mngr.m_deviceMngr.undiscoverAllForTurnOff(m_mngr.m_deviceMngr_cache, intent);
+
+            // We need to make sure to remove the transitory states, in case they were missed, and to enforce the ON/OFF state to get propagated app-side
+            if (m_mngr.isAny(TURNING_OFF, TURNING_ON))
+            {
+                m_mngr.getStateTracker().update(intent, BleStatuses.GATT_STATUS_NOT_APPLICABLE, TURNING_OFF, false, TURNING_ON, false, OFF, true, ON, false, BLE_SCAN_READY, false);
+            }
         }
         else if (newNativeState == BluetoothAdapter.STATE_TURNING_ON)
         {
@@ -330,6 +377,12 @@ final class P_BleManager_Listeners
             P_Task_TurnBleOn turnOnTask = m_mngr.getTaskQueue().getCurrent(P_Task_TurnBleOn.class, m_mngr);
             intent = turnOnTask == null || turnOnTask.isImplicit() ? E_Intent.UNINTENTIONAL : intent;
             m_mngr.getTaskQueue().succeed(P_Task_TurnBleOn.class, m_mngr);
+
+            // We need to make sure to remove the transitory states, in case they were missed, and to enforce the ON/OFF state to get propagated app-side
+            if (m_mngr.isAny(TURNING_OFF, TURNING_ON))
+            {
+                m_mngr.getStateTracker().update(intent, BleStatuses.GATT_STATUS_NOT_APPLICABLE, TURNING_OFF, false, TURNING_ON, false, ON, true, OFF, false);
+            }
         }
         else if (newNativeState == BluetoothAdapter.STATE_TURNING_OFF)
         {
@@ -342,7 +395,7 @@ final class P_BleManager_Listeners
 
                 if (m_mngr.m_server != null)
                 {
-                    m_mngr.m_server.disconnect_internal(BleServer.ServiceAddListener.Status.CANCELLED_FROM_BLE_TURNING_OFF, BleServer.ConnectionFailListener.Status.CANCELLED_FROM_BLE_TURNING_OFF, State.ChangeIntent.UNINTENTIONAL);
+                    m_mngr.m_server.disconnect_internal(AddServiceListener.Status.CANCELLED_FROM_BLE_TURNING_OFF, ServerReconnectFilter.Status.CANCELLED_FROM_BLE_TURNING_OFF, State.ChangeIntent.UNINTENTIONAL);
                 }
 
                 intent = E_Intent.UNINTENTIONAL;
@@ -365,6 +418,12 @@ final class P_BleManager_Listeners
 
         m_mngr.getNativeStateTracker().update(intent, BleStatuses.GATT_STATUS_NOT_APPLICABLE, previousState, false, newState, true);
         m_mngr.getStateTracker().update(intent, BleStatuses.GATT_STATUS_NOT_APPLICABLE, previousState, false, newState, true);
+
+        // If BT is now off, and the manager thinks it's still in the scan ready state, then remove the scan ready state.
+        if (newNativeState == BluetoothAdapter.STATE_OFF && m_mngr.is(BLE_SCAN_READY))
+        {
+            m_mngr.getStateTracker().update(intent, BleStatuses.GATT_STATUS_NOT_APPLICABLE, BLE_SCAN_READY, false);
+        }
 
         if (previousNativeState != BluetoothAdapter.STATE_ON && newNativeState == BluetoothAdapter.STATE_ON)
         {
@@ -396,8 +455,10 @@ final class P_BleManager_Listeners
     {
         final int previousState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR);
         final int newState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
+        final BluetoothDevice device_native = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
         int logLevel = newState == BluetoothDevice.ERROR || previousState == BluetoothDevice.ERROR ? Log.WARN : Log.INFO;
-        m_mngr.getLogger().log(logLevel, "previous=" + m_mngr.getLogger().gattBondState(previousState) + " new=" + m_mngr.getLogger().gattBondState(newState));
+        final String macAddress = device_native != null ? device_native.getAddress() : null;
+        m_mngr.getLogger().log_native(logLevel, macAddress, Utils_String.makeString("previous=", m_mngr.getLogger().gattBondState(previousState), " new=", m_mngr.getLogger().gattBondState(newState)));
 
         final int failReason;
 
@@ -408,7 +469,7 @@ final class P_BleManager_Listeners
 
             if (failReason != BleStatuses.BOND_SUCCESS)
             {
-                m_mngr.getLogger().w(m_mngr.getLogger().gattUnbondReason(failReason));
+                m_mngr.getLogger().w_native(m_mngr.getLogger().gattUnbondReason(failReason));
             }
         }
         else
@@ -417,8 +478,6 @@ final class P_BleManager_Listeners
         }
 
         final P_NativeDeviceLayer layer = m_mngr.m_config.newDeviceLayer(BleDevice.NULL);
-
-        final BluetoothDevice device_native = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
 
         layer.setNativeDevice(device_native);
 

@@ -2,13 +2,13 @@ package com.idevicesinc.sweetblue;
 
 
 import com.idevicesinc.sweetblue.utils.Interval;
-import com.idevicesinc.sweetblue.utils.Util;
+import com.idevicesinc.sweetblue.utils.Util_Unit;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
-import java.util.concurrent.Semaphore;
+
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -22,8 +22,8 @@ public class BondTest extends BaseBleUnitTest
     @Test(timeout = 20000)
     public void bondTest() throws Exception
     {
-        BleDevice device = m_mgr.newDevice(Util.randomMacAddress(), "Test device #1");
-        device.bond(new BleDevice.BondListener()
+        BleDevice device = m_mgr.newDevice(Util_Unit.randomMacAddress(), "Test device #1");
+        device.bond(new BondListener()
         {
             @Override
             public void onEvent(BondEvent e)
@@ -50,8 +50,8 @@ public class BondTest extends BaseBleUnitTest
 
         m_mgr.setConfig(m_config);
 
-        BleDevice device = m_mgr.newDevice(Util.randomMacAddress(), "Test device #2");
-        device.bond(new BleDevice.BondListener()
+        BleDevice device = m_mgr.newDevice(Util_Unit.randomMacAddress(), "Test device #2");
+        device.bond(new BondListener()
         {
             @Override
             public void onEvent(BondEvent e)
@@ -76,7 +76,7 @@ public class BondTest extends BaseBleUnitTest
             }
         };
 
-        m_config.bondFilter = new BleDeviceConfig.BondFilter()
+        m_config.bondFilter = new BondFilter()
         {
             @Override
             public Please onEvent(StateChangeEvent e)
@@ -93,7 +93,7 @@ public class BondTest extends BaseBleUnitTest
 
         m_mgr.setConfig(m_config);
 
-        m_mgr.setListener_Bond(new BleDevice.BondListener()
+        m_mgr.setListener_Bond(new BondListener()
         {
             @Override
             public void onEvent(BondEvent e)
@@ -103,7 +103,7 @@ public class BondTest extends BaseBleUnitTest
             }
         });
 
-        m_mgr.newDevice(Util.randomMacAddress(), "Test device #3");
+        m_mgr.newDevice(Util_Unit.randomMacAddress(), "Test device #3");
 
         startTest();
     }
@@ -113,7 +113,7 @@ public class BondTest extends BaseBleUnitTest
     public BleManagerConfig getConfig()
     {
         BleManagerConfig config = super.getConfig();
-        config.loggingEnabled = true;
+        config.loggingOptions = LogOptions.ON;
         return config;
     }
 

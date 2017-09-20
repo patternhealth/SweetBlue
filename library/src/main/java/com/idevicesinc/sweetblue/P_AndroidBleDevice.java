@@ -5,7 +5,6 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.content.Context;
-
 import com.idevicesinc.sweetblue.compat.K_Util;
 import com.idevicesinc.sweetblue.compat.M_Util;
 import com.idevicesinc.sweetblue.utils.Utils;
@@ -17,7 +16,7 @@ final class P_AndroidBleDevice implements P_NativeDeviceLayer {
 
     private static final String METHOD_NAME__REMOVE_BOND			= "removeBond";
     private static final String METHOD_NAME__CANCEL_BOND_PROCESS	= "cancelBondProcess";
-
+    private static final int TRANSPORT_LE                           = 2; // Taken from BluetoothDevice.TRANSPORT_LE -- only available on API23+
 
     private BluetoothDevice m_native_device;
     private BleDevice m_device;
@@ -79,12 +78,12 @@ final class P_AndroidBleDevice implements P_NativeDeviceLayer {
 
     @Override
     public boolean removeBond() {
-        return Utils_Reflection.callBooleanReturnMethod(m_native_device, METHOD_NAME__REMOVE_BOND, getManager().m_config.loggingEnabled);
+        return Utils_Reflection.callBooleanReturnMethod(m_native_device, METHOD_NAME__REMOVE_BOND, getManager().getLogger().isEnabled());
     }
 
     @Override
     public boolean cancelBond() {
-        return Utils_Reflection.callBooleanReturnMethod(m_native_device, METHOD_NAME__CANCEL_BOND_PROCESS, getManager().m_config.loggingEnabled);
+        return Utils_Reflection.callBooleanReturnMethod(m_native_device, METHOD_NAME__CANCEL_BOND_PROCESS, getManager().getLogger().isEnabled());
     }
 
     private BleManager getManager()
@@ -109,7 +108,7 @@ final class P_AndroidBleDevice implements P_NativeDeviceLayer {
         if (m_native_device != null && Utils.isKitKat())
         {
             final Class[] paramTypes = new Class[] { int.class };
-            return Utils_Reflection.callBooleanReturnMethod(m_native_device, methodName, paramTypes, loggingEnabled);
+            return Utils_Reflection.callBooleanReturnMethod(m_native_device, methodName, paramTypes, loggingEnabled, TRANSPORT_LE);
         }
         return false;
     }

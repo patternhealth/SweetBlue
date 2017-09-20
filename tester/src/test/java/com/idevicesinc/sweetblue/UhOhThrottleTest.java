@@ -34,7 +34,7 @@ public class UhOhThrottleTest extends BaseBleUnitTest
         };
 
         m_mgr.setConfig(m_config);
-        m_mgr.setListener_UhOh(new BleManager.UhOhListener()
+        m_mgr.setListener_UhOh(new UhOhListener()
         {
             private long m_lastEvent;
 
@@ -52,12 +52,12 @@ public class UhOhThrottleTest extends BaseBleUnitTest
                 }
             }
         });
-        m_mgr.uhOh(BleManager.UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
-        m_mgr.uhOh(BleManager.UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
+        m_mgr.uhOh(UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
+        m_mgr.uhOh(UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
         startTest();
     }
 
-    @Test(timeout = 20000)
+    @Test(timeout = 30000)
     public void uhOhThrottleShutdownTest() throws Exception
     {
         final UhOhCallback callback = new UhOhCallback();
@@ -65,7 +65,7 @@ public class UhOhThrottleTest extends BaseBleUnitTest
         m_config.uhOhCallbackThrottle = Interval.secs(20);
 
         m_mgr.setConfig(m_config);
-        m_mgr.setListener_UhOh(new BleManager.UhOhListener()
+        m_mgr.setListener_UhOh(new UhOhListener()
         {
             private long m_lastEvent;
 
@@ -83,8 +83,8 @@ public class UhOhThrottleTest extends BaseBleUnitTest
                 }
             }
         });
-        m_mgr.uhOh(BleManager.UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
-        m_mgr.uhOh(BleManager.UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
+        m_mgr.uhOh(UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
+        m_mgr.uhOh(UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
         startTest();
     }
 
@@ -102,6 +102,8 @@ public class UhOhThrottleTest extends BaseBleUnitTest
             if (time > 5 && time < 10 && !secondTime)
             {
                 secondTime = true;
+                m_mgr.shutdown();
+
                 new Thread(new Runnable()
                 {
                     @Override
@@ -109,14 +111,13 @@ public class UhOhThrottleTest extends BaseBleUnitTest
                     {
                         System.out.println("Restarting BleManager...");
                         m_mgr = BleManager.get(m_activity, m_config);
-                        m_mgr.uhOh(BleManager.UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
-                        m_mgr.uhOh(BleManager.UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
-                        m_mgr.uhOh(BleManager.UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
-                        m_mgr.uhOh(BleManager.UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
+                        m_mgr.uhOh(UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
+                        m_mgr.uhOh(UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
+                        m_mgr.uhOh(UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
+                        m_mgr.uhOh(UhOhListener.UhOh.CANNOT_ENABLE_BLUETOOTH);
                     }
                 }).start();
 
-                m_mgr.shutdown();
             }
             else if (time >= 10d)
             {
@@ -132,7 +133,7 @@ public class UhOhThrottleTest extends BaseBleUnitTest
     {
         BleManagerConfig config = super.getConfig();
         config.runOnMainThread = false;
-        config.loggingEnabled = true;
+        m_config.loggingOptions = LogOptions.ON;
         config.uhOhCallbackThrottle = Interval.secs(5.0);
         return config;
     }

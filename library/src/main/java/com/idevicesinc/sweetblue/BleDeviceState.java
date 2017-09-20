@@ -2,10 +2,8 @@ package com.idevicesinc.sweetblue;
 
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothProfile;
-
-import com.idevicesinc.sweetblue.BleDevice.StateListener;
-import com.idevicesinc.sweetblue.BleManager.DiscoveryListener.DiscoveryEvent;
-import com.idevicesinc.sweetblue.BleManager.DiscoveryListener.LifeCycle;
+import com.idevicesinc.sweetblue.DiscoveryListener.DiscoveryEvent;
+import com.idevicesinc.sweetblue.DiscoveryListener.LifeCycle;
 import com.idevicesinc.sweetblue.annotations.Advanced;
 import com.idevicesinc.sweetblue.utils.BitwiseEnum;
 import com.idevicesinc.sweetblue.utils.State;
@@ -15,9 +13,9 @@ import java.util.UUID;
 /**
  * An enumeration of the various states that a {@link BleDevice} can be in.
  * Note that a device can and usually will be in multiple states simultaneously.
- * Use {@link BleDevice#setListener_State(StateListener)} to be notified of state changes.
+ * Use {@link BleDevice#setListener_State(DeviceStateListener)} to be notified of state changes.
  * 
- * @see BleDevice.StateListener
+ * @see DeviceStateListener
  */
 public enum BleDeviceState implements State
 {
@@ -28,7 +26,7 @@ public enum BleDeviceState implements State
 	NULL,
 	
 	/**
-	 * The device has been undiscovered and you should have been notified through {@link BleManager.DiscoveryListener#onEvent(DiscoveryEvent)}.
+	 * The device has been undiscovered and you should have been notified through {@link DiscoveryListener#onEvent(DiscoveryEvent)}.
 	 * This means the object is effectively dead. {@link BleManager} has removed all references to it and you should do the same.
 	 */
 	UNDISCOVERED,
@@ -36,7 +34,7 @@ public enum BleDeviceState implements State
 	/**
 	 * If {@link BleNodeConfig#reconnectFilter} is set appropriately and the device implicitly disconnects, either through going out of range,
 	 * signal disruption, or whatever, then the device will enter this state. It will continue in this state until you return
-	 * {@link BleNodeConfig.ReconnectFilter.Please#stopRetrying()} from {@link BleNodeConfig.ReconnectFilter#onEvent(BleNodeConfig.ReconnectFilter.ReconnectEvent)}
+	 * {@link ReconnectFilter.ConnectionLostPlease#stopRetrying()} from {@link ReconnectFilter#onEvent(ReconnectFilter.ConnectionLostEvent)}
 	 * or call {@link BleDevice#disconnect()} or when the device actually successfully reconnects.
 	 * 
 	 * @see #RECONNECTING_SHORT_TERM
@@ -48,7 +46,7 @@ public enum BleDeviceState implements State
 	 * Unlike with {@link #RECONNECTING_LONG_TERM}, entering this state does not mean that the {@link BleDevice} becomes {@link #DISCONNECTED}.
 	 * By all outward appearances the library treats the {@link BleDevice} as still being {@link #CONNECTED} while transparently trying
 	 * to reconnect under the hood using {@link BleNodeConfig#reconnectFilter}. You can even perform
-	 * {@link BleDevice#read(UUID, BleDevice.ReadWriteListener)}, {@link BleDevice#write(java.util.UUID, byte[])}, etc.
+	 * {@link BleDevice#read(UUID, ReadWriteListener)}, {@link BleDevice#write(java.util.UUID, byte[])}, etc.
 	 * and they will be queued up until the device *actually* reconnects under the hood.
 	 * 
 	 * @see #RECONNECTING_LONG_TERM
@@ -89,7 +87,7 @@ public enum BleDeviceState implements State
 	/**
 	 * Analogous to {@link BluetoothDevice#BOND_BONDING}. May not be relevant for your application if you don't use encrypted characteristics.
 	 * From this state, a device will either become {@link BleDeviceState#BONDED} (if successful) or {@link BleDeviceState#UNBONDED}.
-	 * If the latter, use {@link BleDevice.BondListener} to get further information on what happened.
+	 * If the latter, use {@link BondListener} to get further information on what happened.
 	 */
 	BONDING,
 	

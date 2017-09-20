@@ -56,7 +56,7 @@ final class P_NativeServerWrapper
 
 	public final void closeServer()
 	{
-		if( m_nativeLayer.isServerNull() )
+		if( m_nativeLayer == null || m_nativeLayer.isServerNull() )
 		{
 			m_mngr.ASSERT(false, "Native server is already closed and nulled out.");
 		}
@@ -181,7 +181,7 @@ final class P_NativeServerWrapper
 
 	final void updateNativeConnectionState(final BluetoothDevice device)
 	{
-		if( m_nativeLayer.isServerNull() )
+		if( m_nativeLayer == null || m_nativeLayer.isServerNull() )
 		{
 			m_mngr.ASSERT(false, "Did not expect native server to be null when implicitly refreshing state.");
 		}

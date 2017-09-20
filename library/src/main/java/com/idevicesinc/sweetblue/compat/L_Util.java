@@ -8,8 +8,11 @@ import android.bluetooth.BluetoothGatt;
 import android.bluetooth.le.AdvertiseCallback;
 import android.bluetooth.le.AdvertiseSettings;
 import android.bluetooth.le.BluetoothLeAdvertiser;
+import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanSettings;
 import android.os.Build;
+import android.util.Log;
+
 import com.idevicesinc.sweetblue.BleDevice;
 import com.idevicesinc.sweetblue.BleManager;
 import com.idevicesinc.sweetblue.utils.Interval;
@@ -123,7 +126,7 @@ public class L_Util
         }
     };
 
-    static android.bluetooth.le.ScanCallback getNativeCallback() {
+    public static android.bluetooth.le.ScanCallback getNativeCallback() {
         return m_callback;
     }
 
@@ -160,7 +163,11 @@ public class L_Util
     }
 
     public static void stopNativeScan(BluetoothAdapter adapter) {
-        adapter.getBluetoothLeScanner().stopScan(m_callback);
+        final BluetoothLeScanner scanner = adapter.getBluetoothLeScanner();
+        if (scanner != null)
+            scanner.stopScan(m_callback);
+        else
+            Log.w("ScanManager", "Tried to stop the scan, but the BluetoothLeScanner instance was null. This implies the scanning has stopped already.");
     }
 
 

@@ -4,17 +4,13 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
-
-import com.idevicesinc.sweetblue.BleDevice.BondListener;
-import com.idevicesinc.sweetblue.BleDevice.ConnectionFailListener;
-import com.idevicesinc.sweetblue.BleDevice.ConnectionFailListener.Status;
-import com.idevicesinc.sweetblue.BleManager.DiscoveryListener.DiscoveryEvent;
-import com.idevicesinc.sweetblue.BleManager.DiscoveryListener.LifeCycle;
+import com.idevicesinc.sweetblue.DiscoveryListener.DiscoveryEvent;
+import com.idevicesinc.sweetblue.DiscoveryListener.LifeCycle;
 import com.idevicesinc.sweetblue.PA_StateTracker.E_Intent;
 import com.idevicesinc.sweetblue.utils.ForEach_Breakable;
 import com.idevicesinc.sweetblue.utils.ForEach_Void;
 import com.idevicesinc.sweetblue.utils.Interval;
-import com.idevicesinc.sweetblue.utils.State;
+
 
 final class P_DeviceManager
 {
@@ -407,7 +403,7 @@ final class P_DeviceManager
         {
             BleDevice device = get(i);
 
-            if (device.m_nativeWrapper.isNativelyBonded() || device.m_nativeWrapper.isNativelyBonding())
+            if (device.m_bondMngr.isNativelyBondingOrBonded())
             {
                 device.unbond_internal(priority, status);
             }
@@ -454,7 +450,7 @@ final class P_DeviceManager
             //--- DRK > Just an early-out performance check here.
             if (device.isAny(BleDeviceState.CONNECTING_OVERALL, BleDeviceState.CONNECTED))
             {
-                device.disconnectWithReason(priority, Status.BLE_TURNING_OFF, ConnectionFailListener.Timing.NOT_APPLICABLE, BleStatuses.GATT_STATUS_NOT_APPLICABLE, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, device.NULL_READWRITE_EVENT());
+                device.disconnectWithReason(priority, DeviceReconnectFilter.Status.BLE_TURNING_OFF, DeviceReconnectFilter.Timing.NOT_APPLICABLE, BleStatuses.GATT_STATUS_NOT_APPLICABLE, BleStatuses.BOND_FAIL_REASON_NOT_APPLICABLE, false, device.NULL_READWRITE_EVENT());
             }
         }
     }
@@ -467,7 +463,7 @@ final class P_DeviceManager
 
             if (!device.is(BleDeviceState.DISCOVERED))
             {
-                device.onNewlyDiscovered(device.layerManager().getDeviceLayer(), null, device.getRssi(), null, device.getOrigin());
+                device.onNewlyDiscovered(device.layerManager().getDeviceLayer(), null, device.getRssi(), device.getScanRecord(), device.getOrigin());
 
                 if (m_mngr.m_discoveryListener != null)
                 {
@@ -525,7 +521,7 @@ final class P_DeviceManager
         }
     }
 
-    private static void undiscoverDevice(BleDevice device, BleManager.DiscoveryListener listener, PA_StateTracker.E_Intent intent)
+    private static void undiscoverDevice(BleDevice device, DiscoveryListener listener, PA_StateTracker.E_Intent intent)
     {
         if (!device.is(BleDeviceState.DISCOVERED)) return;
 
@@ -538,14 +534,14 @@ final class P_DeviceManager
         }
     }
 
-    void undiscoverAndRemove(BleDevice device, BleManager.DiscoveryListener discoveryListener, P_DeviceManager cache, E_Intent intent)
+    void undiscoverAndRemove(BleDevice device, DiscoveryListener discoveryListener, P_DeviceManager cache, E_Intent intent)
     {
         remove(device, cache);
 
         undiscoverDevice(device, discoveryListener, intent);
     }
 
-    void purgeStaleDevices(final double scanTime, final P_DeviceManager cache, final BleManager.DiscoveryListener listener)
+    void purgeStaleDevices(final double scanTime, final P_DeviceManager cache, final DiscoveryListener listener)
     {
         if (m_updating)
         {

@@ -25,6 +25,7 @@ public class UnitTestGatt implements P_GattLayer {
     private boolean m_gattIsNull = true;
     private final BleDevice m_device;
     private boolean m_explicitDisconnect = false;
+
     private List<BluetoothGattService> m_services;
 
 
@@ -45,13 +46,21 @@ public class UnitTestGatt implements P_GattLayer {
         m_services = db.getServiceList();
     }
 
+    public void setDatabase(GattDatabase database)
+    {
+        if (database != null)
+        {
+            m_services = database.getServiceList();
+        }
+    }
+
     @Override
     public void setGatt(BluetoothGatt gatt) {
 
     }
 
     @Override
-    public BleManager.UhOhListener.UhOh closeGatt() {
+    public UhOhListener.UhOh closeGatt() {
         return null;
     }
 
@@ -77,17 +86,23 @@ public class UnitTestGatt implements P_GattLayer {
 
     @Override
     public BluetoothGattService getService(UUID serviceUuid, P_Logger logger) {
-        if (m_services != null)
+        return getBleService(serviceUuid, logger).getService();
+    }
+
+    @Override
+    public BleServiceWrapper getBleService(UUID serviceUuid, P_Logger logger)
+    {
+        if (m_services != null && m_services.size() > 0)
         {
             for (BluetoothGattService service : m_services)
             {
                 if (service.getUuid().equals(serviceUuid))
                 {
-                    return service;
+                    return new BleServiceWrapper(service);
                 }
             }
         }
-        return null;
+        return BleServiceWrapper.NULL;
     }
 
     @Override
@@ -99,7 +114,6 @@ public class UnitTestGatt implements P_GattLayer {
     public BluetoothGatt connect(P_NativeDeviceLayer device, Context context, boolean useAutoConnect, BluetoothGattCallback callback) {
         m_gattIsNull = false;
         m_explicitDisconnect = false;
-        ((UnitTestManagerLayer) m_device.layerManager().getManagerLayer()).updateDeviceState(m_device, BluetoothGatt.STATE_CONNECTING);
         m_device.getManager().getPostManager().postToUpdateThreadDelayed(new Runnable()
         {
             @Override public void run()
@@ -130,7 +144,7 @@ public class UnitTestGatt implements P_GattLayer {
 
     public void setToConnecting()
     {
-        m_device.m_listeners.onConnectionStateChange(null, BleStatuses.GATT_SUCCESS, BluetoothGatt.STATE_CONNECTING);
+        NativeUtil.setToConnecting(m_device, BleStatuses.GATT_SUCCESS, true, Interval.millis(0));
     }
 
     public void setToConnected()
@@ -290,7 +304,7 @@ public class UnitTestGatt implements P_GattLayer {
         if (Interval.isDisabled(m_delayTime))
         {
             Random r = new Random();
-            return Interval.millis(r.nextInt(2999) + 1);
+            return Interval.millis(r.nextInt(1999) + 1);
         }
         else
         {

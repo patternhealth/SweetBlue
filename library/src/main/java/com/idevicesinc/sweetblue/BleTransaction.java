@@ -1,8 +1,7 @@
 package com.idevicesinc.sweetblue;
 
 
-import com.idevicesinc.sweetblue.ReadWriteListener;
-import com.idevicesinc.sweetblue.BleDevice.ReadWriteListener.Status;
+import com.idevicesinc.sweetblue.ReadWriteListener.Status;
 import com.idevicesinc.sweetblue.utils.Event;
 import com.idevicesinc.sweetblue.utils.Utils;
 
@@ -134,7 +133,7 @@ public abstract class BleTransaction
 		start(m_device);
 	}
 	
-	private boolean end(final EndReason reason, final BleDevice.ReadWriteListener.ReadWriteEvent failReason)
+	private boolean end(final EndReason reason, final ReadWriteListener.ReadWriteEvent failReason)
 	{
 		if( !m_isRunning )
 		{
@@ -171,7 +170,7 @@ public abstract class BleTransaction
 		return true;
 	}
 	
-	final void cancel()
+	protected final void cancel()
 	{
 		end(EndReason.CANCELLED, m_device.NULL_READWRITE_EVENT());
 	}
@@ -179,13 +178,13 @@ public abstract class BleTransaction
 	/**
 	 * Call this from subclasses to indicate that the transaction has failed. Usually you call this in your
 	 * {@link ReadWriteListener#onEvent(Event)} when {@link Status} is something other than {@link Status#SUCCESS}. If you do so,
-	 * {@link BleDevice.ConnectionFailListener.ConnectionFailEvent#txnFailReason()} will be set.
+	 * {@link DeviceConnectionFailListener.ConnectionFailEvent#txnFailReason()} will be set.
 	 * 
 	 * @return <code>false</code> if the transaction wasn't running to begin with.
 	 */
 	protected final boolean fail()
 	{
-		final BleDevice.ReadWriteListener.ReadWriteEvent failReason = m_device.m_txnMngr.m_failReason;
+		final ReadWriteListener.ReadWriteEvent failReason = m_device.m_txnMngr.m_failReason;
 		
 		return this.end(EndReason.FAILED, failReason);
 	}

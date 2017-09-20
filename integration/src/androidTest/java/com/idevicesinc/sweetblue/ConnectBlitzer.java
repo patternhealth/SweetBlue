@@ -34,7 +34,7 @@ public class ConnectBlitzer extends BaseTester<MainActivity>
     @Override BleManagerConfig getInitialConfig()
     {
         BleManagerConfig config = new BleManagerConfig();
-        config.defaultScanFilter = new BleManagerConfig.ScanFilter()
+        config.defaultScanFilter = new ScanFilter()
         {
             @Override public Please onEvent(ScanEvent e)
             {
@@ -54,7 +54,7 @@ public class ConnectBlitzer extends BaseTester<MainActivity>
         UIUtil.handleBluetoothEnablerDialogs(uiDevice, activity);
         s = new Semaphore(0);
 
-        mgr.setListener_Discovery(new BleManager.DiscoveryListener()
+        mgr.setListener_Discovery(new DiscoveryListener()
         {
             @Override public void onEvent(DiscoveryEvent e)
             {
@@ -66,9 +66,9 @@ public class ConnectBlitzer extends BaseTester<MainActivity>
                 }
             }
         });
-        mgr.setListener_ConnectionFail(new BleDevice.ConnectionFailListener()
+        mgr.setListener_ConnectionFail(new DeviceConnectionFailListener()
         {
-            @Override public Please onEvent(BleDevice.ConnectionFailListener.ConnectionFailEvent e)
+            @Override public Please onEvent(DeviceConnectionFailListener.ConnectionFailEvent e)
             {
                 assertTrue("Connection failed with status " + e.status().name() + ". Connected successfully " + connectCount + " times.", false);
                 return Please.doNotRetry();
@@ -80,7 +80,7 @@ public class ConnectBlitzer extends BaseTester<MainActivity>
 
     public void doConnect()
     {
-        device.connect(new BleDevice.StateListener()
+        device.connect(new DeviceStateListener()
         {
             @Override public void onEvent(StateEvent e)
             {
@@ -110,7 +110,7 @@ public class ConnectBlitzer extends BaseTester<MainActivity>
         }, listener);
     }
 
-    private class FailListener2 extends BleDevice.DefaultConnectionFailListener
+    private class FailListener2 extends DefaultDeviceConnectionFailListener
     {
         @Override public Please onEvent(ConnectionFailEvent e)
         {
@@ -125,7 +125,7 @@ public class ConnectBlitzer extends BaseTester<MainActivity>
         }
     }
 
-    private class FailListener implements BleDevice.ConnectionFailListener
+    private class FailListener implements DeviceConnectionFailListener
     {
 
         @Override public Please onEvent(ConnectionFailEvent e)
