@@ -6,22 +6,28 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
 import com.idevicesinc.sweetblue.utils.EmptyIterator;
+import com.idevicesinc.sweetblue.utils.Pointer;
 import com.idevicesinc.sweetblue.utils.State;
 
 
+// Adding this suppresslint annotation as we always want to make sure we save to disk immediately.
+@SuppressLint("ApplySharedPref")
 final class P_DiskOptionsManager
 {
 	private static final int ACCESS_MODE = Context.MODE_PRIVATE;
+	private static final String PHONE_NAME_KEY = "Phone_Advertising_Name";
 
 	//--- DRK > Just adding some salt to these to mitigate any possible conflict.
 	private static enum E_Namespace
 	{
 		LAST_DISCONNECT("sweetblue_16l@{&a}"),
 		NEEDS_BONDING("sweetblue_p59=F%k"),
-		DEVICE_NAME("sweetblue_qurhzpoc");
+		DEVICE_NAME("sweetblue_qurhzpoc"),
+		PHONE_NAME("sweetblue_9nc@x02kg");
 
 
 		private final String m_key;
@@ -38,10 +44,12 @@ final class P_DiskOptionsManager
 	}
 	
 	private final Context m_context;
-	
+
 	private final HashMap<String, Integer> m_inMemoryDb_lastDisconnect = new HashMap<String, Integer>();
 	private final HashMap<String, Boolean> m_inMemoryDb_needsBonding = new HashMap<String, Boolean>();
 	private final HashMap<String, String> m_inMemoryDb_name = new HashMap<String, String>();
+	private final Pointer<String> m_inMemoryDb_phoneName = new Pointer<>();
+
 
 	private final HashMap[] m_inMemoryDbs = new HashMap[E_Namespace.values().length];
 
@@ -74,7 +82,7 @@ final class P_DiskOptionsManager
 	}
 
 	
-	public void saveLastDisconnect(final String mac, final State.ChangeIntent changeIntent, final boolean hitDisk)
+	public final void saveLastDisconnect(final String mac, final State.ChangeIntent changeIntent, final boolean hitDisk)
 	{
 		final int diskValue = State.ChangeIntent.toDiskValue(changeIntent);
 		m_inMemoryDb_lastDisconnect.put(mac, diskValue);
@@ -84,14 +92,14 @@ final class P_DiskOptionsManager
 		prefs(E_Namespace.LAST_DISCONNECT).edit().putInt(mac, diskValue).commit();
 	}
 	
-	public State.ChangeIntent loadLastDisconnect(final String mac, final boolean hitDisk)
+	public final State.ChangeIntent loadLastDisconnect(final String mac, final boolean hitDisk)
 	{
 		final Integer value_memory = m_inMemoryDb_lastDisconnect.get(mac);
 		
 		if( value_memory != null )
 		{
 			final State.ChangeIntent lastDisconnect_memory = State.ChangeIntent.fromDiskValue(value_memory);
-			
+
 			return lastDisconnect_memory;
 		}
 		
@@ -105,8 +113,46 @@ final class P_DiskOptionsManager
 		
 		return lastDisconnect;
 	}
+
+	public final void savePhoneAdvertisingName(String name)
+	{
+		if (name == null)
+			name = "";
+
+		m_inMemoryDb_phoneName.value = name;
+
+		prefs(E_Namespace.PHONE_NAME).edit().putString(PHONE_NAME_KEY, name).commit();
+	}
+
+	public final boolean hasSavedPhoneAdvertisingName()
+	{
+		final String value_memory = m_inMemoryDb_phoneName.value;
+
+		if (value_memory != null)
+			return true;
+
+		final SharedPreferences prefs = prefs(E_Namespace.PHONE_NAME);
+
+		final String value_disk = prefs.getString(PHONE_NAME_KEY, null);
+
+		return value_disk != null;
+	}
+
+	public final String getPhoneAdvertisingName()
+	{
+		final String value_memory = m_inMemoryDb_phoneName.value;
+
+		if (value_memory != null)
+			return value_memory;
+
+		final SharedPreferences prefs = prefs(E_Namespace.PHONE_NAME);
+
+		final String value_disk = prefs.getString(PHONE_NAME_KEY, "");
+
+		return value_disk;
+	}
 	
-	public void saveNeedsBonding(final String mac, final boolean hitDisk)
+	public final void saveNeedsBonding(final String mac, final boolean hitDisk)
 	{
 		m_inMemoryDb_needsBonding.put(mac, true);
 		
@@ -115,7 +161,7 @@ final class P_DiskOptionsManager
 		prefs(E_Namespace.NEEDS_BONDING).edit().putBoolean(mac, true).commit();
 	}
 	
-	public boolean loadNeedsBonding(final String mac, final boolean hitDisk)
+	public final boolean loadNeedsBonding(final String mac, final boolean hitDisk)
 	{
 		final Boolean value_memory = m_inMemoryDb_needsBonding.get(mac);
 		
@@ -133,7 +179,7 @@ final class P_DiskOptionsManager
 		return value_disk;
 	}
 
-	public void saveName(final String mac, final String name, final boolean hitDisk)
+	public final void saveName(final String mac, final String name, final boolean hitDisk)
 	{
 		final String name_override = name != null ? name : "";
 
@@ -144,7 +190,7 @@ final class P_DiskOptionsManager
 		prefs(E_Namespace.DEVICE_NAME).edit().putString(mac, name_override).commit();
 	}
 
-	public String loadName(final String mac, final boolean hitDisk)
+	public final String loadName(final String mac, final boolean hitDisk)
 	{
 		final String value_memory = m_inMemoryDb_name.get(mac);
 
@@ -162,7 +208,7 @@ final class P_DiskOptionsManager
 		return value_disk;
 	}
 
-	void clear()
+	final void clear()
 	{
 		final E_Namespace[] values = E_Namespace.values();
 
@@ -180,7 +226,7 @@ final class P_DiskOptionsManager
 		}
 	}
 
-	void clearName(final String macAddress)
+	final void clearName(final String macAddress)
 	{
 		final E_Namespace namespace = E_Namespace.DEVICE_NAME;
 
@@ -201,7 +247,7 @@ final class P_DiskOptionsManager
 		}
 	}
 
-	void clear(final String macAddress)
+	final void clear(final String macAddress)
 	{
 		final E_Namespace[] values = E_Namespace.values();
 
@@ -211,7 +257,7 @@ final class P_DiskOptionsManager
 		}
 	}
 
-	Iterator<String> getPreviouslyConnectedDevices()
+	final Iterator<String> getPreviouslyConnectedDevices()
 	{
 		final SharedPreferences prefs = prefs(E_Namespace.LAST_DISCONNECT);
 
@@ -219,13 +265,13 @@ final class P_DiskOptionsManager
 
 		if( map != null )
 		{
-			List<String> keys = new ArrayList<String>(map.keySet());
+			List<String> keys = new ArrayList<>(map.keySet());
 			Collections.sort(keys);
 			return keys.iterator();
 		}
 		else
 		{
-			return new EmptyIterator<String>();
+			return new EmptyIterator<>();
 		}
 	}
 }

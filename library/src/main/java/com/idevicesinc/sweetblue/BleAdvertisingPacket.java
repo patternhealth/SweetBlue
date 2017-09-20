@@ -6,13 +6,11 @@ import android.bluetooth.le.AdvertiseData;
 import android.bluetooth.le.AdvertiseSettings;
 import android.os.Build;
 import android.os.ParcelUuid;
-
 import com.idevicesinc.sweetblue.utils.BitwiseEnum;
 import com.idevicesinc.sweetblue.utils.BleScanInfo;
 import com.idevicesinc.sweetblue.utils.Interval;
 import com.idevicesinc.sweetblue.BleAdvertisingSettings.BleAdvertisingMode;
 import com.idevicesinc.sweetblue.BleAdvertisingSettings.BleTransmissionPower;
-
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;

@@ -520,8 +520,7 @@ public final class BleServer extends BleNode
 
 		if (!TextUtils.isEmpty(advertisePacket.getCustomName()))
 		{
-			m_customName = advertisePacket.getCustomName();
-			getManager().getNativeAdapter().setName(m_customName);
+			setCustomName(advertisePacket.getCustomName());
 		}
 
 		final P_Task_Advertise adTask = getManager().getTaskQueue().get(P_Task_Advertise.class, getManager());
@@ -540,6 +539,15 @@ public final class BleServer extends BleNode
 		}
 	}
 
+	private void setCustomName(String customName)
+	{
+		m_customName = customName;
+		if (!getManager().m_diskOptionsMngr.hasSavedPhoneAdvertisingName())
+			getManager().m_diskOptionsMngr.savePhoneAdvertisingName(getManager().getNativeAdapter().getName());
+
+		getManager().getNativeAdapter().setName(m_customName);
+	}
+
 	/**
 	 * Stops the server from advertising.
 	 */
@@ -555,6 +563,11 @@ public final class BleServer extends BleNode
 				adTask.clearFromQueue();
 			}
 			getManager().ASSERT(!getManager().getTaskQueue().isCurrentOrInQueue(P_Task_Advertise.class, getManager()));
+			if (m_customName != null)
+			{
+				final String originalName = getManager().m_diskOptionsMngr.getPhoneAdvertisingName();
+				getManager().getNativeAdapter().setName(originalName);
+			}
 		}
 	}
 
