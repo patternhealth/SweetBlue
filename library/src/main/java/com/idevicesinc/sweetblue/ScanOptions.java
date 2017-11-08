@@ -116,4 +116,9 @@ public final class ScanOptions
         return this;
     }
 
+    public final boolean isContinuous()
+    {
+        return m_forceIndefinite || m_isPeriodic;
+    }
+
 }
