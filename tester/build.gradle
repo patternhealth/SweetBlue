@@ -41,6 +41,7 @@ repositories {
 dependencies {
     testImplementation project(':sweetunit')
     implementation project(':library')
+    implementation project(':rxsweetblue')
     implementation 'com.android.support.constraint:constraint-layout:1.0.2'
     testImplementation 'junit:junit:4.12'
     testImplementation 'org.robolectric:robolectric:3.2.2'

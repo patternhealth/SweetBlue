@@ -15,6 +15,10 @@ import com.idevicesinc.sweetblue.rx.exception.ReadWriteException;
 
 import org.reactivestreams.Subscriber;
 
+import io.reactivex.BackpressureStrategy;
+import io.reactivex.Completable;
+import io.reactivex.CompletableEmitter;
+import io.reactivex.CompletableOnSubscribe;
 import io.reactivex.Flowable;
 import io.reactivex.FlowableEmitter;
 import io.reactivex.FlowableOnSubscribe;
@@ -33,8 +37,6 @@ public class RxBleDevice
     private final BleDevice m_device;
     private final PublishProcessor<BleDevice.StateListener.StateEvent> m_StatePublisher;
     private final PublishProcessor<NotificationListener.NotificationEvent> m_notifyPublisher;
-
-
 
 
     private RxBleDevice(BleDevice device)
@@ -67,19 +69,6 @@ public class RxBleDevice
         });
     }
 
-    public final Observable<BleDevice.StateListener.StateEvent> observeState()
-    {
-
-        return Observable.create(new ObservableOnSubscribe<BleDevice.StateListener.StateEvent>()
-        {
-            @Override
-            public void subscribe(final ObservableEmitter<BleDevice.StateListener.StateEvent> e) throws Exception
-            {
-
-            }
-        });
-    }
-
     public final PublishProcessor getStatePublisher()
     {
         return m_StatePublisher;
@@ -98,12 +87,12 @@ public class RxBleDevice
      * a {@link ConnectException} will be returned in {@link SingleEmitter#onError(Throwable)}, which contains the
      * {@link ConnectionFailEvent}.
      */
-    public Single<Void> connect()
+    public Completable connect()
     {
-        return Single.create(new SingleOnSubscribe<Void>()
+        return Completable.create(new CompletableOnSubscribe()
         {
             @Override
-            public void subscribe(final SingleEmitter<Void> emitter) throws Exception
+            public void subscribe(final CompletableEmitter emitter) throws Exception
             {
                 if (emitter.isDisposed())  return;
 
@@ -113,7 +102,7 @@ public class RxBleDevice
                     public void onEvent(StateEvent e)
                     {
                         if (e.didEnter(BleDeviceState.INITIALIZED))
-                            emitter.onSuccess(null);
+                            emitter.onComplete();
 
                     }
                 }, new BleDevice.DefaultConnectionFailListener() {
@@ -163,6 +152,11 @@ public class RxBleDevice
                 });
             }
         });
+    }
+
+    public void unbond()
+    {
+        m_device.unbond();
     }
 
     /**
@@ -326,9 +320,11 @@ public class RxBleDevice
         return m_device.equals(device.m_device);
     }
 
-
-
-
+    @Override
+    public String toString()
+    {
+        return m_device.toString();
+    }
 
     static RxBleDevice create(BleDevice device)
     {

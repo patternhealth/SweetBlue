@@ -10,13 +10,24 @@ import com.idevicesinc.sweetblue.BleManager.DiscoveryListener.LifeCycle;
 import com.idevicesinc.sweetblue.BleManager.DiscoveryListener;
 import com.idevicesinc.sweetblue.BleManagerConfig;
 import com.idevicesinc.sweetblue.BleManagerState;
+import com.idevicesinc.sweetblue.DeviceStateListener;
 import com.idevicesinc.sweetblue.ManagerStateListener;
 import com.idevicesinc.sweetblue.ScanOptions;
 import com.idevicesinc.sweetblue.annotations.Nullable;
 import com.idevicesinc.sweetblue.rx.annotations.SingleSubscriber;
+import com.idevicesinc.sweetblue.utils.Pointer;
+
+import org.reactivestreams.Publisher;
+
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+
+import io.reactivex.BackpressureStrategy;
+import io.reactivex.Flowable;
+import io.reactivex.FlowableEmitter;
+import io.reactivex.FlowableOnSubscribe;
 import io.reactivex.Observable;
 import io.reactivex.ObservableEmitter;
 import io.reactivex.ObservableOnSubscribe;
@@ -25,9 +36,10 @@ import io.reactivex.SingleEmitter;
 import io.reactivex.SingleOnSubscribe;
 import io.reactivex.functions.Action;
 import io.reactivex.functions.Function;
+import io.reactivex.processors.PublishProcessor;
 
 
-public class RxBleManager
+public final class RxBleManager
 {
 
     public static RxBleManager get(Context context, BleManagerConfig config)
@@ -61,17 +73,61 @@ public class RxBleManager
 
     private final BleManager m_manager;
 
+    private final PublishProcessor<BleManager.StateListener.StateEvent> m_mgrStatePublisher;
+    private final PublishProcessor<BleDevice.StateListener.StateEvent> m_deviceStatePublisher;
+    private final PublishProcessor<BleManager.UhOhListener.UhOhEvent> m_uhOhPublisher;
+
 
 
     private RxBleManager(BleManager manager)
     {
         m_manager = manager;
+        m_mgrStatePublisher = PublishProcessor.create();
+        m_deviceStatePublisher = PublishProcessor.create();
+        m_uhOhPublisher = PublishProcessor.create();
+        setupListeners();
+    }
+
+    private void setupListeners()
+    {
+        m_manager.setListener_State(new ManagerStateListener()
+        {
+            @Override
+            public void onEvent(BleManager.StateListener.StateEvent e)
+            {
+                if (m_mgrStatePublisher.hasSubscribers())
+                    m_mgrStatePublisher.onNext(e);
+            }
+        });
+        m_manager.setListener_DeviceState(new DeviceStateListener()
+        {
+            @Override
+            public void onEvent(BleDevice.StateListener.StateEvent e)
+            {
+                if (m_deviceStatePublisher.hasSubscribers())
+                    m_deviceStatePublisher.onNext(e);
+            }
+        });
+        m_manager.setListener_UhOh(new BleManager.UhOhListener()
+        {
+            @Override
+            public void onEvent(UhOhEvent e)
+            {
+                if (m_uhOhPublisher.hasSubscribers())
+                    m_uhOhPublisher.onNext(e);
+            }
+        });
     }
 
 
     public final void setConfig(BleManagerConfig config)
     {
         m_manager.setConfig(config);
+    }
+
+    public final BleManager getBleManager()
+    {
+        return m_manager;
     }
 
     /**
@@ -84,14 +140,14 @@ public class RxBleManager
      * NOTE2: This will override any {@link DiscoveryListener} that is set within the {@link ScanOptions} instance passed into this method.
      */
     @SingleSubscriber(methods = {"RxBleManager.scan()", "RxBleManager.scan_onlyNew()"})
-    public final Observable<RxDiscoveryEvent> scan(final ScanOptions options)
+    public final Flowable<RxDiscoveryEvent> scan(final ScanOptions options)
     {
-        return Observable.create(new ObservableOnSubscribe<BleManager.DiscoveryListener.DiscoveryEvent>()
+        return Flowable.create(new FlowableOnSubscribe<BleManager.DiscoveryListener.DiscoveryEvent>()
         {
             @Override
-            public void subscribe(final ObservableEmitter<BleManager.DiscoveryListener.DiscoveryEvent> emitter) throws Exception
+            public void subscribe(final FlowableEmitter<BleManager.DiscoveryListener.DiscoveryEvent> emitter) throws Exception
             {
-                if (emitter.isDisposed())
+                if (emitter.isCancelled())
                     return;
 
                 options.withDiscoveryListener(new BleManager.DiscoveryListener()
@@ -99,7 +155,7 @@ public class RxBleManager
                     @Override
                     public void onEvent(DiscoveryEvent e)
                     {
-                        if (!emitter.isDisposed())
+                        if (!emitter.isCancelled())
                         {
                             emitter.onNext(e);
                         }
@@ -123,7 +179,7 @@ public class RxBleManager
 
                 m_manager.startScan(options);
             }
-        }).doOnDispose(new Action()
+        }, BackpressureStrategy.BUFFER).doOnCancel(new Action()
         {
             @Override
             public void run() throws Exception
@@ -149,22 +205,28 @@ public class RxBleManager
      * NOTE2: This will override any {@link DiscoveryListener} that is set within the {@link ScanOptions} instance passed into this method.
      */
     @SingleSubscriber(methods = {"RxBleManager.scan()", "RxBleManager.scan_onlyNew()"})
-    public final Observable<RxBleDevice> scan_onlyNew(final ScanOptions options)
+    public final Flowable<RxBleDevice> scan_onlyNew(@Nullable(Nullable.Prevalence.NORMAL) ScanOptions options)
     {
-        return Observable.create(new ObservableOnSubscribe<BleDevice>()
+        final Pointer<ScanOptions> optionsPointer = new Pointer<>(options);
+        if (options == null)
+            optionsPointer.value = new ScanOptions();
+
+        return Flowable.create(new FlowableOnSubscribe<BleDevice>()
         {
             @Override
-            public void subscribe(final ObservableEmitter<BleDevice> emitter) throws Exception
+            public void subscribe(final FlowableEmitter<BleDevice> emitter) throws Exception
             {
-                if (emitter.isDisposed())
+                if (emitter.isCancelled())
                     return;
+
+                ScanOptions options = optionsPointer.value;
 
                 options.withDiscoveryListener(new BleManager.DiscoveryListener()
                 {
                     @Override
                     public void onEvent(DiscoveryEvent e)
                     {
-                        if (emitter.isDisposed())
+                        if (emitter.isCancelled())
                             return;
 
                         if (e.was(LifeCycle.DISCOVERED))
@@ -191,7 +253,7 @@ public class RxBleManager
 
                 m_manager.startScan(options);
             }
-        }).doOnDispose(new Action()
+        }, BackpressureStrategy.BUFFER).doOnCancel(new Action()
         {
             @Override
             public void run() throws Exception
@@ -249,6 +311,33 @@ public class RxBleManager
     }
 
     /**
+     * Returns a {@link Publisher} which emits {@link com.idevicesinc.sweetblue.BleManager.StateListener.StateEvent} when {@link BleManager}'s state
+     * changes.
+     */
+    public PublishProcessor<BleManager.StateListener.StateEvent> mgrStatePublisher()
+    {
+        return m_mgrStatePublisher;
+    }
+
+    /**
+     * Returns a {@link Publisher} which emits {@link com.idevicesinc.sweetblue.BleDevice.StateListener.StateEvent} when any {@link BleDevice}'s state
+     * changes.
+     */
+    public PublishProcessor<BleDevice.StateListener.StateEvent> deviceStatePublisher()
+    {
+        return m_deviceStatePublisher;
+    }
+
+    /**
+     * Returns a {@link Publisher} which emits {@link com.idevicesinc.sweetblue.BleManager.UhOhListener.UhOhEvent} when any {@link com.idevicesinc.sweetblue.BleManager.UhOhListener.UhOh}s
+     * are posted by the library.
+     */
+    public PublishProcessor<BleManager.UhOhListener.UhOhEvent> uhOhPublisher()
+    {
+        return m_uhOhPublisher;
+    }
+
+    /**
      * Rx-ified version of {@link BleManager#newDevice(String)}.
      */
     public Single<RxBleDevice> newDevice(final String macAddress)
@@ -287,6 +376,17 @@ public class RxBleManager
                 emitter.onSuccess(m_manager.newDevice(macAddress, name, config));
             }
         }).map(BLE_DEVICE_TRANSFORMER);
+    }
+
+    /**
+     * Disconnects all devices, shuts down the BleManager, and it's backing thread, and unregisters any receivers that may be in use.
+     * This also clears out the {@link BleManager}, and {@link RxBleManager} static instances. This is meant to be called upon application exit. However, to use it again,
+     * just call {@link BleManager#get(Context)}, or {@link BleManager#get(Context, BleManagerConfig)} again.
+     */
+    public final void shutdown()
+    {
+        m_manager.shutdown();
+        s_instance = null;
     }
 
 

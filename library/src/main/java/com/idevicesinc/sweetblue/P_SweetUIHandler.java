@@ -3,6 +3,7 @@ package com.idevicesinc.sweetblue;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Message;
 
 
 final class P_SweetUIHandler implements P_SweetHandler
@@ -65,6 +66,18 @@ final class P_SweetUIHandler implements P_SweetHandler
         }
     }
 
+    @Override
+    public void postDelayed(Runnable action, long delay, Object tag)
+    {
+        if (m_handler != null)
+        {
+            Message msg = Message.obtain(m_handler, action);
+            msg.obj = tag;
+
+            m_handler.sendMessageDelayed(msg, Math.max(0L, delay));
+        }
+    }
+
     @Override public void removeCallbacks(Runnable action)
     {
         if (m_handler != null)
@@ -75,6 +88,12 @@ final class P_SweetUIHandler implements P_SweetHandler
         {
             m_thread.removeCallbacks(action);
         }
+    }
+
+    @Override
+    public void removeCallbacks(Object tag)
+    {
+        m_handler.removeCallbacksAndMessages(tag);
     }
 
     @Override public Thread getThread()

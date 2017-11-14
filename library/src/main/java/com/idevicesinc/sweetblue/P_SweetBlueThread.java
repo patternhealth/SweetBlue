@@ -24,12 +24,18 @@ final class P_SweetBlueThread implements P_SweetHandler
 
     @Override public void post(Runnable action)
     {
-        m_runnables.add(new SweetRunnable(action, System.currentTimeMillis(), 0));
+        m_runnables.add(new SweetRunnable(action, System.currentTimeMillis(), 0, null));
     }
 
     @Override public void postDelayed(Runnable action, long delay)
     {
-        m_runnables.add(new SweetRunnable(action, System.currentTimeMillis(), delay));
+        m_runnables.add(new SweetRunnable(action, System.currentTimeMillis(), delay, null));
+    }
+
+    @Override
+    public void postDelayed(Runnable action, long delay, Object tag)
+    {
+        m_runnables.add(new SweetRunnable(action, System.currentTimeMillis(), delay, tag));
     }
 
     @Override public void removeCallbacks(Runnable action)
@@ -39,6 +45,21 @@ final class P_SweetBlueThread implements P_SweetHandler
         {
             SweetRunnable run = it.next();
             if (run.m_runnable == action)
+            {
+                run.cancel();
+                it.remove();
+            }
+        }
+    }
+
+    @Override
+    public void removeCallbacks(Object tag)
+    {
+        Iterator<SweetRunnable> it = m_runnables.iterator();
+        while (it.hasNext())
+        {
+            SweetRunnable run = it.next();
+            if (run.m_tag.equals(tag))
             {
                 run.cancel();
                 it.remove();
@@ -70,14 +91,16 @@ final class P_SweetBlueThread implements P_SweetHandler
         private final Runnable m_runnable;
         private final long m_postedTime;
         private final long m_delay;
+        private final Object m_tag;
         private boolean m_canceled;
 
 
-        public SweetRunnable(Runnable action, long postedTime, long delay)
+        public SweetRunnable(Runnable action, long postedTime, long delay, Object tag)
         {
             m_runnable = action;
             m_postedTime = postedTime;
             m_delay = delay;
+            m_tag = tag;
         }
 
         public void run()
