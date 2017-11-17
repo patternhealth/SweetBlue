@@ -2,6 +2,8 @@ package com.idevicesinc.sweetblue.rx;
 
 
 import android.content.Context;
+import android.util.Log;
+
 import com.idevicesinc.sweetblue.BleDevice;
 import com.idevicesinc.sweetblue.BleDeviceConfig;
 import com.idevicesinc.sweetblue.BleDeviceState;
@@ -10,20 +12,18 @@ import com.idevicesinc.sweetblue.BleManager.DiscoveryListener.LifeCycle;
 import com.idevicesinc.sweetblue.BleManager.DiscoveryListener;
 import com.idevicesinc.sweetblue.BleManagerConfig;
 import com.idevicesinc.sweetblue.BleManagerState;
+import com.idevicesinc.sweetblue.BleServer;
 import com.idevicesinc.sweetblue.DeviceStateListener;
 import com.idevicesinc.sweetblue.ManagerStateListener;
+import com.idevicesinc.sweetblue.ReadWriteListener;
 import com.idevicesinc.sweetblue.ScanOptions;
 import com.idevicesinc.sweetblue.annotations.Nullable;
 import com.idevicesinc.sweetblue.rx.annotations.SingleSubscriber;
+import com.idevicesinc.sweetblue.rx.schedulers.SweetBlueSchedulers;
 import com.idevicesinc.sweetblue.utils.Pointer;
-
-import org.reactivestreams.Publisher;
-
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-
 import io.reactivex.BackpressureStrategy;
 import io.reactivex.Flowable;
 import io.reactivex.FlowableEmitter;
@@ -34,7 +34,9 @@ import io.reactivex.ObservableOnSubscribe;
 import io.reactivex.Single;
 import io.reactivex.SingleEmitter;
 import io.reactivex.SingleOnSubscribe;
+import io.reactivex.flowables.ConnectableFlowable;
 import io.reactivex.functions.Action;
+import io.reactivex.functions.Cancellable;
 import io.reactivex.functions.Function;
 import io.reactivex.processors.PublishProcessor;
 
@@ -73,50 +75,20 @@ public final class RxBleManager
 
     private final BleManager m_manager;
 
-    private final PublishProcessor<BleManager.StateListener.StateEvent> m_mgrStatePublisher;
-    private final PublishProcessor<BleDevice.StateListener.StateEvent> m_deviceStatePublisher;
-    private final PublishProcessor<BleManager.UhOhListener.UhOhEvent> m_uhOhPublisher;
+
+    private ConnectableFlowable<BleManager.UhOhListener.UhOhEvent> m_uhOhFlowable;
+    private ConnectableFlowable<BleDevice.StateListener.StateEvent> m_deviceStateFlowable;
+    private ConnectableFlowable<BleManager.StateListener.StateEvent> m_mgrStateFlowable;
+    private ConnectableFlowable<BleManager.AssertListener.AssertEvent> m_assertFlowable;
+    private ConnectableFlowable<BleServer.StateListener.StateEvent> m_serverStateFlowable;
+    private ConnectableFlowable<BleDevice.BondListener.BondEvent> m_bondFlowable;
+    private ConnectableFlowable<BleDevice.ReadWriteListener.ReadWriteEvent> m_readWriteFlowable;
 
 
 
     private RxBleManager(BleManager manager)
     {
         m_manager = manager;
-        m_mgrStatePublisher = PublishProcessor.create();
-        m_deviceStatePublisher = PublishProcessor.create();
-        m_uhOhPublisher = PublishProcessor.create();
-        setupListeners();
-    }
-
-    private void setupListeners()
-    {
-        m_manager.setListener_State(new ManagerStateListener()
-        {
-            @Override
-            public void onEvent(BleManager.StateListener.StateEvent e)
-            {
-                if (m_mgrStatePublisher.hasSubscribers())
-                    m_mgrStatePublisher.onNext(e);
-            }
-        });
-        m_manager.setListener_DeviceState(new DeviceStateListener()
-        {
-            @Override
-            public void onEvent(BleDevice.StateListener.StateEvent e)
-            {
-                if (m_deviceStatePublisher.hasSubscribers())
-                    m_deviceStatePublisher.onNext(e);
-            }
-        });
-        m_manager.setListener_UhOh(new BleManager.UhOhListener()
-        {
-            @Override
-            public void onEvent(UhOhEvent e)
-            {
-                if (m_uhOhPublisher.hasSubscribers())
-                    m_uhOhPublisher.onNext(e);
-            }
-        });
     }
 
 
@@ -311,60 +283,312 @@ public final class RxBleManager
     }
 
     /**
-     * Returns a {@link Publisher} which emits {@link com.idevicesinc.sweetblue.BleManager.StateListener.StateEvent} when {@link BleManager}'s state
+     * Returns a {@link Flowable} which emits {@link com.idevicesinc.sweetblue.BleManager.StateListener.StateEvent} when {@link BleManager}'s state
      * changes.
      */
-    public PublishProcessor<BleManager.StateListener.StateEvent> mgrStatePublisher()
+    public Flowable<BleManager.StateListener.StateEvent> observeMgrStateEvents()
     {
-        return m_mgrStatePublisher;
+        if (m_mgrStateFlowable == null)
+        {
+            m_mgrStateFlowable = Flowable.create(new FlowableOnSubscribe<BleManager.StateListener.StateEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BleManager.StateListener.StateEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_State(new ManagerStateListener()
+                    {
+                        @Override
+                        public void onEvent(BleManager.StateListener.StateEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_State((ManagerStateListener) null);
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).publish();
+        }
+
+        return m_mgrStateFlowable.refCount();
     }
 
     /**
-     * Returns a {@link Publisher} which emits {@link com.idevicesinc.sweetblue.BleDevice.StateListener.StateEvent} when any {@link BleDevice}'s state
+     * Returns a {@link Flowable} which emits {@link com.idevicesinc.sweetblue.BleDevice.StateListener.StateEvent} when any {@link BleDevice}'s state
      * changes.
      */
-    public PublishProcessor<BleDevice.StateListener.StateEvent> deviceStatePublisher()
+    public Flowable<BleDevice.StateListener.StateEvent> observeDeviceStateEvents()
     {
-        return m_deviceStatePublisher;
+        if (m_deviceStateFlowable == null)
+        {
+            m_deviceStateFlowable = Flowable.create(new FlowableOnSubscribe<BleDevice.StateListener.StateEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BleDevice.StateListener.StateEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_DeviceState(new DeviceStateListener()
+                    {
+                        @Override
+                        public void onEvent(BleDevice.StateListener.StateEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_DeviceState((DeviceStateListener) null);
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).publish();
+        }
+
+        return m_deviceStateFlowable.refCount();
     }
 
     /**
-     * Returns a {@link Publisher} which emits {@link com.idevicesinc.sweetblue.BleManager.UhOhListener.UhOhEvent} when any {@link com.idevicesinc.sweetblue.BleManager.UhOhListener.UhOh}s
+     * Returns a {@link Flowable} which emits {@link com.idevicesinc.sweetblue.BleManager.UhOhListener.UhOhEvent} when any {@link com.idevicesinc.sweetblue.BleManager.UhOhListener.UhOh}s
      * are posted by the library.
      */
-    public PublishProcessor<BleManager.UhOhListener.UhOhEvent> uhOhPublisher()
+    public Flowable<BleManager.UhOhListener.UhOhEvent> observeUhOhEvents()
     {
-        return m_uhOhPublisher;
+        if (m_uhOhFlowable == null)
+        {
+            m_uhOhFlowable = Flowable.create(new FlowableOnSubscribe<BleManager.UhOhListener.UhOhEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BleManager.UhOhListener.UhOhEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_UhOh(new BleManager.UhOhListener()
+                    {
+                        @Override
+                        public void onEvent(UhOhEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_UhOh(null);
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).publish();
+        }
+
+        return m_uhOhFlowable.refCount();
+    }
+
+    public final Flowable<BleManager.AssertListener.AssertEvent> observeAssertEvents()
+    {
+        if (m_assertFlowable == null)
+        {
+            m_assertFlowable = Flowable.create(new FlowableOnSubscribe<BleManager.AssertListener.AssertEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BleManager.AssertListener.AssertEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_Assert(new BleManager.AssertListener()
+                    {
+                        @Override
+                        public void onEvent(AssertEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_Assert(null);
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).publish();
+        }
+
+        return m_assertFlowable.refCount();
+    }
+
+    public final Flowable<BleServer.StateListener.StateEvent> observeServerStateEvents()
+    {
+        if (m_serverStateFlowable == null)
+        {
+            m_serverStateFlowable = Flowable.create(new FlowableOnSubscribe<BleServer.StateListener.StateEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BleServer.StateListener.StateEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_ServerState(new BleServer.StateListener()
+                    {
+                        @Override
+                        public void onEvent(StateEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_ServerState(null);
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).publish();
+        }
+
+        return m_serverStateFlowable.refCount();
+    }
+
+    public final Flowable<BleDevice.BondListener.BondEvent> observeBondEvents()
+    {
+        if (m_bondFlowable == null)
+        {
+            m_bondFlowable = Flowable.create(new FlowableOnSubscribe<BleDevice.BondListener.BondEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BleDevice.BondListener.BondEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_Bond(new BleDevice.BondListener()
+                    {
+                        @Override
+                        public void onEvent(BondEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_Bond(null);
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).publish();
+        }
+
+        return m_bondFlowable.refCount();
+    }
+
+    public final Flowable<BleDevice.ReadWriteListener.ReadWriteEvent> observeReadWriteEvents()
+    {
+        if (m_readWriteFlowable == null)
+        {
+            m_readWriteFlowable = Flowable.create(new FlowableOnSubscribe<BleDevice.ReadWriteListener.ReadWriteEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BleDevice.ReadWriteListener.ReadWriteEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_Read_Write(new ReadWriteListener()
+                    {
+                        @Override
+                        public void onEvent(BleDevice.ReadWriteListener.ReadWriteEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_Read_Write(null);
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).publish();
+        }
+
+        return m_readWriteFlowable.refCount();
     }
 
     /**
      * Rx-ified version of {@link BleManager#newDevice(String)}.
+     *
+     * NOTE: The device creation is performed on the thread which SweetBlue is using, and this method is blocking.
      */
-    public Single<RxBleDevice> newDevice(final String macAddress)
+    public RxBleDevice newDevice(final String macAddress)
     {
         return newDevice(macAddress, null, null);
     }
 
     /**
      * Rx-ified version of {@link BleManager#newDevice(String, String)}.
+     *
+     * NOTE: The device creation is performed on the thread which SweetBlue is using, and this method is blocking.
      */
-    public Single<RxBleDevice> newDevice(final String macAddress, final String name)
+    public RxBleDevice newDevice(final String macAddress, final String name)
     {
         return newDevice(macAddress, name, null);
     }
 
     /**
      * Rx-ified version of {@link BleManager#newDevice(String, BleDeviceConfig)}.
+     *
+     * NOTE: The device creation is performed on the thread which SweetBlue is using, and this method is blocking.
      */
-    public Single<RxBleDevice> newDevice(final String macAddress, final BleManagerConfig config)
+    public RxBleDevice newDevice(final String macAddress, final BleManagerConfig config)
     {
         return newDevice(macAddress, null, config);
     }
 
     /**
      * Rx-ified version of {@link BleManager#newDevice(String, String, BleDeviceConfig)}.
+     *
+     * NOTE: The device creation is performed on the thread which SweetBlue is using, and this method is blocking.
      */
-    public Single<RxBleDevice> newDevice(final String macAddress, final String name, final BleDeviceConfig config)
+    public RxBleDevice newDevice(final String macAddress, final String name, final BleDeviceConfig config)
     {
         return Single.create(new SingleOnSubscribe<BleDevice>()
         {
@@ -375,7 +599,7 @@ public final class RxBleManager
 
                 emitter.onSuccess(m_manager.newDevice(macAddress, name, config));
             }
-        }).map(BLE_DEVICE_TRANSFORMER);
+        }).map(BLE_DEVICE_TRANSFORMER).subscribeOn(SweetBlueSchedulers.sweetBlueThread()).blockingGet();
     }
 
     /**
@@ -386,6 +610,7 @@ public final class RxBleManager
     public final void shutdown()
     {
         m_manager.shutdown();
+        m_deviceMap.clear();
         s_instance = null;
     }
 

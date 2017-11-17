@@ -12,9 +12,6 @@ import com.idevicesinc.sweetblue.rx.exception.BondException;
 import com.idevicesinc.sweetblue.rx.exception.ConnectException;
 import com.idevicesinc.sweetblue.BleNode.ConnectionFailListener.ConnectionFailEvent;
 import com.idevicesinc.sweetblue.rx.exception.ReadWriteException;
-
-import org.reactivestreams.Subscriber;
-
 import io.reactivex.BackpressureStrategy;
 import io.reactivex.Completable;
 import io.reactivex.CompletableEmitter;
@@ -22,56 +19,176 @@ import io.reactivex.CompletableOnSubscribe;
 import io.reactivex.Flowable;
 import io.reactivex.FlowableEmitter;
 import io.reactivex.FlowableOnSubscribe;
-import io.reactivex.Observable;
-import io.reactivex.ObservableEmitter;
-import io.reactivex.ObservableOnSubscribe;
 import io.reactivex.Single;
 import io.reactivex.SingleEmitter;
 import io.reactivex.SingleOnSubscribe;
-import io.reactivex.processors.PublishProcessor;
+import io.reactivex.flowables.ConnectableFlowable;
+import io.reactivex.functions.Cancellable;
 
 
 public class RxBleDevice
 {
 
     private final BleDevice m_device;
-    private final PublishProcessor<BleDevice.StateListener.StateEvent> m_StatePublisher;
-    private final PublishProcessor<NotificationListener.NotificationEvent> m_notifyPublisher;
+
+    private ConnectableFlowable<BleDevice.StateListener.StateEvent> m_stateFlowable;
+    private ConnectableFlowable<NotificationListener.NotificationEvent> m_notifyFlowable;
+    private ConnectableFlowable<BondListener.BondEvent> m_bondFlowable;
+    private ConnectableFlowable<ReadWriteEvent> m_readWriteFlowable;
 
 
     private RxBleDevice(BleDevice device)
     {
         m_device = device;
-        m_StatePublisher = PublishProcessor.create();
-        m_notifyPublisher = PublishProcessor.create();
-        setListeners();
     }
 
-    private void setListeners()
+
+    public final Flowable<BleDevice.StateListener.StateEvent> observeStateEvents()
     {
-        m_device.setListener_State(new DeviceStateListener()
+        if (m_stateFlowable == null)
         {
-            @Override
-            public void onEvent(BleDevice.StateListener.StateEvent e)
+            m_stateFlowable = Flowable.create(new FlowableOnSubscribe<BleDevice.StateListener.StateEvent>()
             {
-                if (m_StatePublisher.hasSubscribers())
-                    m_StatePublisher.onNext(e);
-            }
-        });
-        m_device.setListener_Notification(new NotificationListener()
-        {
-            @Override
-            public void onEvent(NotificationEvent e)
-            {
-                if (m_notifyPublisher.hasSubscribers())
-                    m_notifyPublisher.onNext(e);
-            }
-        });
+                @Override
+                public void subscribe(final FlowableEmitter<BleDevice.StateListener.StateEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_device.setListener_State(new DeviceStateListener()
+                    {
+                        @Override
+                        public void onEvent(BleDevice.StateListener.StateEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_device.setListener_State((DeviceStateListener) null);
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).publish();
+        }
+
+        return m_stateFlowable.refCount();
     }
 
-    public final PublishProcessor getStatePublisher()
+    public final Flowable<NotificationListener.NotificationEvent> observeNotifyEvents()
     {
-        return m_StatePublisher;
+        if (m_notifyFlowable == null)
+        {
+            m_notifyFlowable = Flowable.create(new FlowableOnSubscribe<NotificationListener.NotificationEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<NotificationListener.NotificationEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_device.setListener_Notification(new NotificationListener()
+                    {
+                        @Override
+                        public void onEvent(NotificationEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_device.setListener_Notification(null);
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).publish();
+        }
+
+        return m_notifyFlowable.refCount();
+    }
+
+    public final Flowable<BondListener.BondEvent> observeBondEvents()
+    {
+        if (m_bondFlowable == null)
+        {
+            m_bondFlowable = Flowable.create(new FlowableOnSubscribe<BondListener.BondEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BondListener.BondEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_device.setListener_Bond(new BondListener()
+                    {
+                        @Override
+                        public void onEvent(BondEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_device.setListener_Bond(null);
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).publish();
+        }
+
+        return m_bondFlowable.refCount();
+    }
+
+    public final Flowable<ReadWriteEvent> observeReadWriteEvents()
+    {
+        if (m_readWriteFlowable == null)
+        {
+            m_readWriteFlowable = Flowable.create(new FlowableOnSubscribe<ReadWriteEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<ReadWriteEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_device.setListener_ReadWrite(new ReadWriteListener()
+                    {
+                        @Override
+                        public void onEvent(ReadWriteEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_device.setListener_ReadWrite((ReadWriteListener) null);
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).publish();
+        }
+
+        return m_readWriteFlowable.refCount();
     }
 
     public final BleDevice getBleDevice()
@@ -154,6 +271,9 @@ public class RxBleDevice
         });
     }
 
+    /**
+     * Forwards {@link BleDevice#unbond()}.
+     */
     public void unbond()
     {
         m_device.unbond();

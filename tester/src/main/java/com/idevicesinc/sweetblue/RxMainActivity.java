@@ -26,6 +26,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import com.idevicesinc.sweetblue.tester.R;
+
+import org.reactivestreams.Subscriber;
+import org.reactivestreams.Subscription;
+
+import io.reactivex.Observable;
+import io.reactivex.Single;
+import io.reactivex.SingleObserver;
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.CompositeDisposable;
 import io.reactivex.disposables.Disposable;
@@ -110,22 +117,24 @@ public class RxMainActivity extends Activity
 
         mgr = RxBleManager.get(this, config);
 
-        mDisposables.add(uhOhDisposable = mgr.uhOhPublisher().subscribe(uhOhEvent -> {
-            Log.e("UhOhs", "Got " + uhOhEvent.uhOh() + " with remedy " + uhOhEvent.remedy());
-        }));
+//        mDisposables.add(uhOhDisposable = mgr.observeUhOhEvents().subscribe(uhOhEvent ->
+//                Log.e("UhOhs", "Got " + uhOhEvent.uhOh() + " with remedy " + uhOhEvent.remedy()))
+//        );
+//
+//        mDisposables.add(mgrStateDisposable = mgr.mgrStatePublisher().subscribe(stateEvent -> {
+//            boolean scanning = mgr.getBleManager().isScanning();
+//            mStartScan.setEnabled(!scanning);
+//        }));
+//
+//        mDisposables.add(deviceStateDisposable = mgr.observeDeviceStateEvents().subscribe(stateEvent -> {
+//            if (System.currentTimeMillis() - mLastStateChange > STATE_CHANGE_MIN_TIME)
+//            {
+//                mLastStateChange = System.currentTimeMillis();
+//                mAdaptor.notifyDataSetChanged();
+//            }
+//        }));
 
-        mDisposables.add(mgrStateDisposable = mgr.mgrStatePublisher().subscribe(stateEvent -> {
-            boolean scanning = mgr.getBleManager().isScanning();
-            mStartScan.setEnabled(!scanning);
-        }));
-
-        mDisposables.add(deviceStateDisposable = mgr.deviceStatePublisher().subscribe(stateEvent -> {
-            if (System.currentTimeMillis() - mLastStateChange > STATE_CHANGE_MIN_TIME)
-            {
-                mLastStateChange = System.currentTimeMillis();
-                mAdaptor.notifyDataSetChanged();
-            }
-        }));
+        mDisposables.add(mgr.observeMgrStateEvents().subscribe((e) -> Log.e("State*", "State event: " + e.toString())));
 
         mStartScan.setEnabled(false);
 
@@ -253,6 +262,7 @@ public class RxMainActivity extends Activity
     {
         super.onDestroy();
         mDisposables.dispose();
+        mgr.shutdown();
     }
 
     private static class ViewHolder

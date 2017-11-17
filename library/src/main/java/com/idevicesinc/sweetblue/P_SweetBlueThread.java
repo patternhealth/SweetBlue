@@ -17,7 +17,7 @@ final class P_SweetBlueThread implements P_SweetHandler
     {
         m_runnables = new LinkedBlockingQueue<>();
         m_running = true;
-        thread = new Thread(new HandlerRunner());
+        thread = new Thread(new HandlerRunner(), "SweetBlue Update");
         thread.start();
     }
 
@@ -59,7 +59,7 @@ final class P_SweetBlueThread implements P_SweetHandler
         while (it.hasNext())
         {
             SweetRunnable run = it.next();
-            if (run.m_tag.equals(tag))
+            if (run.m_tag != null && run.m_tag.equals(tag))
             {
                 run.cancel();
                 it.remove();
