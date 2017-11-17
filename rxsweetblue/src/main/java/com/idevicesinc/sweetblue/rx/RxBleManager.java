@@ -12,6 +12,7 @@ import com.idevicesinc.sweetblue.BleManager.DiscoveryListener.LifeCycle;
 import com.idevicesinc.sweetblue.BleManager.DiscoveryListener;
 import com.idevicesinc.sweetblue.BleManagerConfig;
 import com.idevicesinc.sweetblue.BleManagerState;
+import com.idevicesinc.sweetblue.BleNode;
 import com.idevicesinc.sweetblue.BleServer;
 import com.idevicesinc.sweetblue.DeviceStateListener;
 import com.idevicesinc.sweetblue.ManagerStateListener;
@@ -19,6 +20,7 @@ import com.idevicesinc.sweetblue.ReadWriteListener;
 import com.idevicesinc.sweetblue.ScanOptions;
 import com.idevicesinc.sweetblue.annotations.Nullable;
 import com.idevicesinc.sweetblue.rx.annotations.SingleSubscriber;
+import com.idevicesinc.sweetblue.rx.schedulers.SweetBlueScheduler;
 import com.idevicesinc.sweetblue.rx.schedulers.SweetBlueSchedulers;
 import com.idevicesinc.sweetblue.utils.Pointer;
 import java.util.HashMap;
@@ -83,6 +85,8 @@ public final class RxBleManager
     private ConnectableFlowable<BleServer.StateListener.StateEvent> m_serverStateFlowable;
     private ConnectableFlowable<BleDevice.BondListener.BondEvent> m_bondFlowable;
     private ConnectableFlowable<BleDevice.ReadWriteListener.ReadWriteEvent> m_readWriteFlowable;
+    private ConnectableFlowable<BleNode.HistoricalDataLoadListener.HistoricalDataLoadEvent> m_historicalDataLoadFlowable;
+    private ConnectableFlowable<RxDiscoveryEvent> m_discoveryFlowable;
 
 
 
@@ -238,9 +242,9 @@ public final class RxBleManager
     /**
      * Rx-ified version of {@link BleManager#getDevice(BleDeviceState)}.
      *
-     * Returns a {@link Single} which contains an instance of {@link RxBleDevice}.
+     * Returns an instance of {@link RxBleDevice}.
      */
-    public Single<RxBleDevice> getDevice(final BleDeviceState state)
+    public RxBleDevice getDevice(final BleDeviceState state)
     {
         return Single.create(new SingleOnSubscribe<BleDevice>()
         {
@@ -251,7 +255,7 @@ public final class RxBleManager
 
                 emitter.onSuccess(m_manager.getDevice(state));
             }
-        }).map(BLE_DEVICE_TRANSFORMER);
+        }).subscribeOn(SweetBlueSchedulers.sweetBlueThread()).map(BLE_DEVICE_TRANSFORMER).blockingGet();
     }
 
     /**
@@ -279,7 +283,7 @@ public final class RxBleManager
 
                 emitter.onComplete();
             }
-        }).map(BLE_DEVICE_TRANSFORMER);
+        }).subscribeOn(SweetBlueSchedulers.sweetBlueThread()).map(BLE_DEVICE_TRANSFORMER);
     }
 
     /**
@@ -551,6 +555,43 @@ public final class RxBleManager
         }
 
         return m_readWriteFlowable.refCount();
+    }
+
+    public final Flowable<BleNode.HistoricalDataLoadListener.HistoricalDataLoadEvent> observeHistoricalDataLoadEvents()
+    {
+        if (m_historicalDataLoadFlowable == null)
+        {
+            m_historicalDataLoadFlowable = Flowable.create(new FlowableOnSubscribe<BleNode.HistoricalDataLoadListener.HistoricalDataLoadEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BleNode.HistoricalDataLoadListener.HistoricalDataLoadEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_HistoricalDataLoad(new BleNode.HistoricalDataLoadListener()
+                    {
+                        @Override
+                        public void onEvent(HistoricalDataLoadEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_HistoricalDataLoad(null);
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).publish();
+        }
+
+        return m_historicalDataLoadFlowable.refCount();
     }
 
     /**
