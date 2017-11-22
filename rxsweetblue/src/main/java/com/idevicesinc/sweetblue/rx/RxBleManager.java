@@ -2,8 +2,6 @@ package com.idevicesinc.sweetblue.rx;
 
 
 import android.content.Context;
-import android.util.Log;
-
 import com.idevicesinc.sweetblue.BleDevice;
 import com.idevicesinc.sweetblue.BleDeviceConfig;
 import com.idevicesinc.sweetblue.BleDeviceState;
@@ -16,11 +14,11 @@ import com.idevicesinc.sweetblue.BleNode;
 import com.idevicesinc.sweetblue.BleServer;
 import com.idevicesinc.sweetblue.DeviceStateListener;
 import com.idevicesinc.sweetblue.ManagerStateListener;
+import com.idevicesinc.sweetblue.NotificationListener;
 import com.idevicesinc.sweetblue.ReadWriteListener;
 import com.idevicesinc.sweetblue.ScanOptions;
 import com.idevicesinc.sweetblue.annotations.Nullable;
-import com.idevicesinc.sweetblue.rx.annotations.SingleSubscriber;
-import com.idevicesinc.sweetblue.rx.schedulers.SweetBlueScheduler;
+import com.idevicesinc.sweetblue.rx.annotations.HotObservable;
 import com.idevicesinc.sweetblue.rx.schedulers.SweetBlueSchedulers;
 import com.idevicesinc.sweetblue.utils.Pointer;
 import java.util.HashMap;
@@ -36,11 +34,11 @@ import io.reactivex.ObservableOnSubscribe;
 import io.reactivex.Single;
 import io.reactivex.SingleEmitter;
 import io.reactivex.SingleOnSubscribe;
-import io.reactivex.flowables.ConnectableFlowable;
-import io.reactivex.functions.Action;
+import io.reactivex.disposables.Disposable;
 import io.reactivex.functions.Cancellable;
+import io.reactivex.functions.Consumer;
 import io.reactivex.functions.Function;
-import io.reactivex.processors.PublishProcessor;
+import io.reactivex.functions.Predicate;
 
 
 public final class RxBleManager
@@ -78,15 +76,19 @@ public final class RxBleManager
     private final BleManager m_manager;
 
 
-    private ConnectableFlowable<BleManager.UhOhListener.UhOhEvent> m_uhOhFlowable;
-    private ConnectableFlowable<BleDevice.StateListener.StateEvent> m_deviceStateFlowable;
-    private ConnectableFlowable<BleManager.StateListener.StateEvent> m_mgrStateFlowable;
-    private ConnectableFlowable<BleManager.AssertListener.AssertEvent> m_assertFlowable;
-    private ConnectableFlowable<BleServer.StateListener.StateEvent> m_serverStateFlowable;
-    private ConnectableFlowable<BleDevice.BondListener.BondEvent> m_bondFlowable;
-    private ConnectableFlowable<BleDevice.ReadWriteListener.ReadWriteEvent> m_readWriteFlowable;
-    private ConnectableFlowable<BleNode.HistoricalDataLoadListener.HistoricalDataLoadEvent> m_historicalDataLoadFlowable;
-    private ConnectableFlowable<RxDiscoveryEvent> m_discoveryFlowable;
+    private Flowable<BleManager.UhOhListener.UhOhEvent> m_uhOhFlowable;
+    private Flowable<BleDevice.StateListener.StateEvent> m_deviceStateFlowable;
+    private Flowable<BleManager.StateListener.StateEvent> m_mgrStateFlowable;
+    private Flowable<BleManager.AssertListener.AssertEvent> m_assertFlowable;
+    private Flowable<BleServer.StateListener.StateEvent> m_serverStateFlowable;
+    private Flowable<BleDevice.BondListener.BondEvent> m_bondFlowable;
+    private Flowable<BleDevice.ReadWriteListener.ReadWriteEvent> m_readWriteFlowable;
+    private Flowable<NotificationListener.NotificationEvent> m_notifyEventFlowable;
+    private Flowable<BleNode.HistoricalDataLoadListener.HistoricalDataLoadEvent> m_historicalDataLoadFlowable;
+    private Flowable<RxDiscoveryEvent> m_discoveryFlowable;
+    private Flowable<BleServer.OutgoingListener.OutgoingEvent> m_outgoingEventFlowable;
+    private Flowable<BleServer.ServiceAddListener.ServiceAddEvent> m_serviceAddEventFlowable;
+    private Flowable<BleServer.AdvertisingListener.AdvertisingEvent> m_advertisingEventFlowable;
 
 
 
@@ -112,64 +114,13 @@ public final class RxBleManager
      * {@link LifeCycle#REDISCOVERED} state can be emitted many times in a single scan. In most cases, {@link #scan_onlyNew(ScanOptions)} will suffice, as it only emits
      * when a {@link BleDevice} is {@link LifeCycle#DISCOVERED}.
      *
-     * NOTE: You should make sure to only have ONE instance of this observable around, as you can only have 1 scan running at a time.
-     * NOTE2: This will override any {@link DiscoveryListener} that is set within the {@link ScanOptions} instance passed into this method.
+     * NOTE: This ignores any {@link DiscoveryListener} that is set within the {@link ScanOptions} instance passed into this method.
      */
-    @SingleSubscriber(methods = {"RxBleManager.scan()", "RxBleManager.scan_onlyNew()"})
-    public final Flowable<RxDiscoveryEvent> scan(final ScanOptions options)
+    public final @HotObservable Flowable<RxDiscoveryEvent> scan(final ScanOptions options)
     {
-        return Flowable.create(new FlowableOnSubscribe<BleManager.DiscoveryListener.DiscoveryEvent>()
-        {
-            @Override
-            public void subscribe(final FlowableEmitter<BleManager.DiscoveryListener.DiscoveryEvent> emitter) throws Exception
-            {
-                if (emitter.isCancelled())
-                    return;
-
-                options.withDiscoveryListener(new BleManager.DiscoveryListener()
-                {
-                    @Override
-                    public void onEvent(DiscoveryEvent e)
-                    {
-                        if (!emitter.isCancelled())
-                        {
-                            emitter.onNext(e);
-                        }
-                    }
-                });
-
-                if (!options.isContinuous())
-                {
-                    m_manager.setListener_State(new ManagerStateListener()
-                    {
-                        @Override
-                        public void onEvent(BleManager.StateListener.StateEvent e)
-                        {
-                            if (e.didExit(BleManagerState.SCANNING) && !m_manager.isScanning())
-                            {
-                                emitter.onComplete();
-                            }
-                        }
-                    });
-                }
-
-                m_manager.startScan(options);
-            }
-        }, BackpressureStrategy.BUFFER).doOnCancel(new Action()
-        {
-            @Override
-            public void run() throws Exception
-            {
-                m_manager.stopAllScanning();
-            }
-        }).map(new Function<BleManager.DiscoveryListener.DiscoveryEvent, RxDiscoveryEvent>()
-        {
-            @Override
-            public RxDiscoveryEvent apply(BleManager.DiscoveryListener.DiscoveryEvent discoveryEvent) throws Exception
-            {
-                return new RxDiscoveryEvent(discoveryEvent);
-            }
-        });
+        checkDiscoveryFlowable(options);
+        m_manager.startScan(options);
+        return m_discoveryFlowable.share();
     }
 
     /**
@@ -177,66 +128,26 @@ public final class RxBleManager
      * method will only ever emit devices that were {@link LifeCycle#DISCOVERED}, as opposed to being {@link LifeCycle#REDISCOVERED}, or {@link LifeCycle#UNDISCOVERED}. If
      * you care about those other states, then you should use {@link #scan(ScanOptions)} instead.
      *
-     * NOTE: You should make sure to only have ONE instance of this observable around, as you can only have 1 scan running at a time.
-     * NOTE2: This will override any {@link DiscoveryListener} that is set within the {@link ScanOptions} instance passed into this method.
+     * NOTE: This ignores any {@link DiscoveryListener} that is set within the {@link ScanOptions} instance passed into this method.
      */
-    @SingleSubscriber(methods = {"RxBleManager.scan()", "RxBleManager.scan_onlyNew()"})
-    public final Flowable<RxBleDevice> scan_onlyNew(@Nullable(Nullable.Prevalence.NORMAL) ScanOptions options)
+    public final @HotObservable Flowable<RxBleDevice> scan_onlyNew(@Nullable(Nullable.Prevalence.NORMAL) ScanOptions options)
     {
-        final Pointer<ScanOptions> optionsPointer = new Pointer<>(options);
-        if (options == null)
-            optionsPointer.value = new ScanOptions();
-
-        return Flowable.create(new FlowableOnSubscribe<BleDevice>()
+        return scan(options).filter(new Predicate<RxDiscoveryEvent>()
         {
             @Override
-            public void subscribe(final FlowableEmitter<BleDevice> emitter) throws Exception
+            public boolean test(RxDiscoveryEvent rxDiscoveryEvent) throws Exception
             {
-                if (emitter.isCancelled())
-                    return;
-
-                ScanOptions options = optionsPointer.value;
-
-                options.withDiscoveryListener(new BleManager.DiscoveryListener()
-                {
-                    @Override
-                    public void onEvent(DiscoveryEvent e)
-                    {
-                        if (emitter.isCancelled())
-                            return;
-
-                        if (e.was(LifeCycle.DISCOVERED))
-                        {
-                            emitter.onNext(e.device());
-                        }
-                    }
-                });
-
-                if (!options.isContinuous())
-                {
-                    m_manager.setListener_State(new ManagerStateListener()
-                    {
-                        @Override
-                        public void onEvent(BleManager.StateListener.StateEvent e)
-                        {
-                            if (e.didExit(BleManagerState.SCANNING) && !m_manager.isScanning())
-                            {
-                                emitter.onComplete();
-                            }
-                        }
-                    });
-                }
-
-                m_manager.startScan(options);
+                // Filter out anything other than DISCOVERED devices (ignoring rediscovery, and undiscovery)
+                return rxDiscoveryEvent.wasDiscovered();
             }
-        }, BackpressureStrategy.BUFFER).doOnCancel(new Action()
+        }).map(new Function<RxDiscoveryEvent, RxBleDevice>()
         {
             @Override
-            public void run() throws Exception
+            public RxBleDevice apply(RxDiscoveryEvent rxDiscoveryEvent) throws Exception
             {
-                m_manager.stopAllScanning();
+                return rxDiscoveryEvent.getDevice();
             }
-        }).map(BLE_DEVICE_TRANSFORMER);
+        });
     }
 
     /**
@@ -290,7 +201,7 @@ public final class RxBleManager
      * Returns a {@link Flowable} which emits {@link com.idevicesinc.sweetblue.BleManager.StateListener.StateEvent} when {@link BleManager}'s state
      * changes.
      */
-    public Flowable<BleManager.StateListener.StateEvent> observeMgrStateEvents()
+    public @HotObservable Flowable<BleManager.StateListener.StateEvent> observeMgrStateEvents()
     {
         if (m_mgrStateFlowable == null)
         {
@@ -318,20 +229,21 @@ public final class RxBleManager
                         public void cancel() throws Exception
                         {
                             m_manager.setListener_State((ManagerStateListener) null);
+                            m_mgrStateFlowable = null;
                         }
                     });
                 }
-            }, BackpressureStrategy.BUFFER).publish();
+            }, BackpressureStrategy.BUFFER).share();
         }
 
-        return m_mgrStateFlowable.refCount();
+        return m_mgrStateFlowable.share();
     }
 
     /**
      * Returns a {@link Flowable} which emits {@link com.idevicesinc.sweetblue.BleDevice.StateListener.StateEvent} when any {@link BleDevice}'s state
      * changes.
      */
-    public Flowable<BleDevice.StateListener.StateEvent> observeDeviceStateEvents()
+    public @HotObservable Flowable<BleDevice.StateListener.StateEvent> observeDeviceStateEvents()
     {
         if (m_deviceStateFlowable == null)
         {
@@ -359,20 +271,21 @@ public final class RxBleManager
                         public void cancel() throws Exception
                         {
                             m_manager.setListener_DeviceState((DeviceStateListener) null);
+                            m_deviceStateFlowable = null;
                         }
                     });
                 }
-            }, BackpressureStrategy.BUFFER).publish();
+            }, BackpressureStrategy.BUFFER).share();
         }
 
-        return m_deviceStateFlowable.refCount();
+        return m_deviceStateFlowable.share();
     }
 
     /**
      * Returns a {@link Flowable} which emits {@link com.idevicesinc.sweetblue.BleManager.UhOhListener.UhOhEvent} when any {@link com.idevicesinc.sweetblue.BleManager.UhOhListener.UhOh}s
      * are posted by the library.
      */
-    public Flowable<BleManager.UhOhListener.UhOhEvent> observeUhOhEvents()
+    public @HotObservable Flowable<BleManager.UhOhListener.UhOhEvent> observeUhOhEvents()
     {
         if (m_uhOhFlowable == null)
         {
@@ -400,16 +313,17 @@ public final class RxBleManager
                         public void cancel() throws Exception
                         {
                             m_manager.setListener_UhOh(null);
+                            m_uhOhFlowable = null;
                         }
                     });
                 }
-            }, BackpressureStrategy.BUFFER).publish();
+            }, BackpressureStrategy.BUFFER).share();
         }
 
-        return m_uhOhFlowable.refCount();
+        return m_uhOhFlowable.share();
     }
 
-    public final Flowable<BleManager.AssertListener.AssertEvent> observeAssertEvents()
+    public final @HotObservable Flowable<BleManager.AssertListener.AssertEvent> observeAssertEvents()
     {
         if (m_assertFlowable == null)
         {
@@ -437,16 +351,17 @@ public final class RxBleManager
                         public void cancel() throws Exception
                         {
                             m_manager.setListener_Assert(null);
+                            m_assertFlowable = null;
                         }
                     });
                 }
-            }, BackpressureStrategy.BUFFER).publish();
+            }, BackpressureStrategy.BUFFER).share();
         }
 
-        return m_assertFlowable.refCount();
+        return m_assertFlowable.share();
     }
 
-    public final Flowable<BleServer.StateListener.StateEvent> observeServerStateEvents()
+    public final @HotObservable Flowable<BleServer.StateListener.StateEvent> observeServerStateEvents()
     {
         if (m_serverStateFlowable == null)
         {
@@ -474,16 +389,17 @@ public final class RxBleManager
                         public void cancel() throws Exception
                         {
                             m_manager.setListener_ServerState(null);
+                            m_serverStateFlowable = null;
                         }
                     });
                 }
-            }, BackpressureStrategy.BUFFER).publish();
+            }, BackpressureStrategy.BUFFER).share();
         }
 
-        return m_serverStateFlowable.refCount();
+        return m_serverStateFlowable.share();
     }
 
-    public final Flowable<BleDevice.BondListener.BondEvent> observeBondEvents()
+    public final @HotObservable Flowable<BleDevice.BondListener.BondEvent> observeBondEvents()
     {
         if (m_bondFlowable == null)
         {
@@ -511,16 +427,17 @@ public final class RxBleManager
                         public void cancel() throws Exception
                         {
                             m_manager.setListener_Bond(null);
+                            m_bondFlowable = null;
                         }
                     });
                 }
-            }, BackpressureStrategy.BUFFER).publish();
+            }, BackpressureStrategy.BUFFER).share();
         }
 
-        return m_bondFlowable.refCount();
+        return m_bondFlowable.share();
     }
 
-    public final Flowable<BleDevice.ReadWriteListener.ReadWriteEvent> observeReadWriteEvents()
+    public final @HotObservable Flowable<BleDevice.ReadWriteListener.ReadWriteEvent> observeReadWriteEvents()
     {
         if (m_readWriteFlowable == null)
         {
@@ -548,16 +465,55 @@ public final class RxBleManager
                         public void cancel() throws Exception
                         {
                             m_manager.setListener_Read_Write(null);
+                            m_readWriteFlowable = null;
                         }
                     });
                 }
-            }, BackpressureStrategy.BUFFER).publish();
+            }, BackpressureStrategy.BUFFER).share();
         }
 
-        return m_readWriteFlowable.refCount();
+        return m_readWriteFlowable.share();
     }
 
-    public final Flowable<BleNode.HistoricalDataLoadListener.HistoricalDataLoadEvent> observeHistoricalDataLoadEvents()
+    public final @HotObservable Flowable<NotificationListener.NotificationEvent> observeNotificationEvents()
+    {
+        if (m_notifyEventFlowable == null)
+        {
+            m_notifyEventFlowable = Flowable.create(new FlowableOnSubscribe<NotificationListener.NotificationEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<NotificationListener.NotificationEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_Notification(new NotificationListener()
+                    {
+                        @Override
+                        public void onEvent(NotificationEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_Notification(null);
+                            m_notifyEventFlowable = null;
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).share();
+        }
+
+        return m_notifyEventFlowable.share();
+    }
+
+    public final @HotObservable Flowable<BleNode.HistoricalDataLoadListener.HistoricalDataLoadEvent> observeHistoricalDataLoadEvents()
     {
         if (m_historicalDataLoadFlowable == null)
         {
@@ -585,13 +541,128 @@ public final class RxBleManager
                         public void cancel() throws Exception
                         {
                             m_manager.setListener_HistoricalDataLoad(null);
+                            m_historicalDataLoadFlowable = null;
                         }
                     });
                 }
-            }, BackpressureStrategy.BUFFER).publish();
+            }, BackpressureStrategy.BUFFER).share();
         }
 
-        return m_historicalDataLoadFlowable.refCount();
+        return m_historicalDataLoadFlowable.share();
+    }
+
+    public final @HotObservable Flowable<BleServer.OutgoingListener.OutgoingEvent> observeOutgoingEvents()
+    {
+        if (m_outgoingEventFlowable == null)
+        {
+            m_outgoingEventFlowable = Flowable.create(new FlowableOnSubscribe<BleServer.OutgoingListener.OutgoingEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BleServer.OutgoingListener.OutgoingEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_Outgoing(new BleServer.OutgoingListener()
+                    {
+                        @Override
+                        public void onEvent(OutgoingEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_Outgoing(null);
+                            m_outgoingEventFlowable = null;
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).share();
+        }
+
+        return m_outgoingEventFlowable.share();
+    }
+
+    public final @HotObservable Flowable<BleServer.ServiceAddListener.ServiceAddEvent> observeServiceAddEvents()
+    {
+        if (m_serviceAddEventFlowable == null)
+        {
+            m_serviceAddEventFlowable = Flowable.create(new FlowableOnSubscribe<BleServer.ServiceAddListener.ServiceAddEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BleServer.ServiceAddListener.ServiceAddEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_ServiceAdd(new BleServer.ServiceAddListener()
+                    {
+                        @Override
+                        public void onEvent(ServiceAddEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_ServiceAdd(null);
+                            m_serviceAddEventFlowable = null;
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).share();
+        }
+
+        return m_serviceAddEventFlowable.share();
+    }
+
+    public final @HotObservable Flowable<BleServer.AdvertisingListener.AdvertisingEvent> observeAdvertisingEvents()
+    {
+        if (m_advertisingEventFlowable == null)
+        {
+            m_advertisingEventFlowable = Flowable.create(new FlowableOnSubscribe<BleServer.AdvertisingListener.AdvertisingEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BleServer.AdvertisingListener.AdvertisingEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_Advertising(new BleServer.AdvertisingListener()
+                    {
+                        @Override
+                        public void onEvent(AdvertisingEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_Advertising(null);
+                            m_advertisingEventFlowable = null;
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).share();
+        }
+
+        return m_advertisingEventFlowable.share();
     }
 
     /**
@@ -653,6 +724,75 @@ public final class RxBleManager
         m_manager.shutdown();
         m_deviceMap.clear();
         s_instance = null;
+    }
+
+
+
+    private void checkDiscoveryFlowable(ScanOptions scanoptions)
+    {
+        final Pointer<ScanOptions> options = new Pointer<>(scanoptions == null ? new ScanOptions() : scanoptions);
+        if (m_discoveryFlowable == null)
+        {
+            m_discoveryFlowable = Flowable.create(new FlowableOnSubscribe<DiscoveryListener.DiscoveryEvent>()
+            {
+                private Disposable stateDisposable;
+
+                @Override
+                public void subscribe(final FlowableEmitter<DiscoveryListener.DiscoveryEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_manager.setListener_Discovery(new DiscoveryListener()
+                    {
+                        @Override
+                        public void onEvent(DiscoveryEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    if (!options.value.isContinuous())
+                    {
+                        stateDisposable = observeMgrStateEvents().subscribe(new Consumer<BleManager.StateListener.StateEvent>()
+                        {
+                            @Override
+                            public void accept(BleManager.StateListener.StateEvent stateEvent) throws Exception
+                            {
+                                if (stateEvent.didExit(BleManagerState.SCANNING) && !m_manager.isScanning())
+                                {
+                                    emitter.onComplete();
+                                }
+                            }
+                        });
+                    }
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_manager.setListener_Discovery(null);
+                            m_discoveryFlowable = null;
+                            // Clean up the state disposable, if we have one, and it's not already disposed
+                            if (stateDisposable != null && !stateDisposable.isDisposed())
+                                stateDisposable.dispose();
+
+                            // Stop all scanning
+                            m_manager.stopAllScanning();
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).map(new Function<DiscoveryListener.DiscoveryEvent, RxDiscoveryEvent>()
+            {
+                @Override
+                public RxDiscoveryEvent apply(DiscoveryListener.DiscoveryEvent discoveryEvent) throws Exception
+                {
+                    return new RxDiscoveryEvent(discoveryEvent);
+                }
+            }).share();
+        }
     }
 
 

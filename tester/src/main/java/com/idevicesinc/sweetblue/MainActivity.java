@@ -14,6 +14,7 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ListView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.idevicesinc.sweetblue.rx.RxBleDevice;
 import com.idevicesinc.sweetblue.rx.RxBleManager;
@@ -120,10 +121,10 @@ public class MainActivity extends Activity
 //            }
 //        };
         config.forceBondDialog = true;
-        config.reconnectFilter = new BleNodeConfig.DefaultReconnectFilter(Interval.ONE_SEC, Interval.secs(3.0), Interval.FIVE_SECS, Interval.secs(45));
+//        config.reconnectFilter = new BleNodeConfig.DefaultReconnectFilter(Interval.ONE_SEC, Interval.secs(3.0), Interval.FIVE_SECS, Interval.secs(45));
         config.uhOhCallbackThrottle = Interval.secs(60.0);
 
-        config.defaultScanFilter = e -> BleManagerConfig.ScanFilter.Please.acknowledgeIf(e.name_normalized().contains("wall"));
+        config.defaultScanFilter = e -> BleManagerConfig.ScanFilter.Please.acknowledgeIf(e.name_normalized().contains("rpi"));
 
         mgr = BleManager.get(this, config);
 
@@ -215,6 +216,7 @@ public class MainActivity extends Activity
             }
             if (connected)
             {
+                menu.add(3, 3, 0, "Request Larger MTU");
                 menu.add(2, 2, 0, "Disconnect");
             }
         }
@@ -237,6 +239,13 @@ public class MainActivity extends Activity
         else if (item.getItemId() == 2)
         {
             mDevices.get(info.position).disconnect();
+            return true;
+        }
+        else if (item.getItemId() == 3)
+        {
+            mDevices.get(info.position).setMtu(128, e ->
+                    Toast.makeText(MainActivity.this, "MTU request came back as " + e.status() + ". MTU size: " + e.mtu(), Toast.LENGTH_LONG).show()
+            );
             return true;
         }
         return super.onContextItemSelected(item);

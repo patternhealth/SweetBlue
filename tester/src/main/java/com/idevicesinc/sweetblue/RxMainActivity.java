@@ -30,6 +30,7 @@ import com.idevicesinc.sweetblue.tester.R;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
+import io.reactivex.FlowableSubscriber;
 import io.reactivex.Observable;
 import io.reactivex.Single;
 import io.reactivex.SingleObserver;

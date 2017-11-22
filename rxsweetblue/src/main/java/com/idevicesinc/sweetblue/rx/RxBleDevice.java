@@ -6,8 +6,10 @@ import com.idevicesinc.sweetblue.BleDevice.BondListener;
 import com.idevicesinc.sweetblue.BleDevice.ReadWriteListener;
 import com.idevicesinc.sweetblue.BleDevice.ReadWriteListener.ReadWriteEvent;
 import com.idevicesinc.sweetblue.BleDeviceState;
+import com.idevicesinc.sweetblue.BleNode;
 import com.idevicesinc.sweetblue.DeviceStateListener;
 import com.idevicesinc.sweetblue.NotificationListener;
+import com.idevicesinc.sweetblue.rx.annotations.HotObservable;
 import com.idevicesinc.sweetblue.rx.exception.BondException;
 import com.idevicesinc.sweetblue.rx.exception.ConnectException;
 import com.idevicesinc.sweetblue.BleNode.ConnectionFailListener.ConnectionFailEvent;
@@ -22,8 +24,8 @@ import io.reactivex.FlowableOnSubscribe;
 import io.reactivex.Single;
 import io.reactivex.SingleEmitter;
 import io.reactivex.SingleOnSubscribe;
-import io.reactivex.flowables.ConnectableFlowable;
 import io.reactivex.functions.Cancellable;
+import io.reactivex.functions.Function;
 
 
 public class RxBleDevice
@@ -31,10 +33,11 @@ public class RxBleDevice
 
     private final BleDevice m_device;
 
-    private ConnectableFlowable<BleDevice.StateListener.StateEvent> m_stateFlowable;
-    private ConnectableFlowable<NotificationListener.NotificationEvent> m_notifyFlowable;
-    private ConnectableFlowable<BondListener.BondEvent> m_bondFlowable;
-    private ConnectableFlowable<ReadWriteEvent> m_readWriteFlowable;
+    private Flowable<BleDevice.StateListener.StateEvent> m_stateFlowable;
+    private Flowable<NotificationListener.NotificationEvent> m_notifyFlowable;
+    private Flowable<BondListener.BondEvent> m_bondFlowable;
+    private Flowable<ReadWriteEvent> m_readWriteFlowable;
+    private Flowable<BleNode.HistoricalDataLoadListener.HistoricalDataLoadEvent> m_historicalDataLoadFlowable;
 
 
     private RxBleDevice(BleDevice device)
@@ -43,7 +46,7 @@ public class RxBleDevice
     }
 
 
-    public final Flowable<BleDevice.StateListener.StateEvent> observeStateEvents()
+    public final @HotObservable Flowable<BleDevice.StateListener.StateEvent> observeStateEvents()
     {
         if (m_stateFlowable == null)
         {
@@ -71,16 +74,17 @@ public class RxBleDevice
                         public void cancel() throws Exception
                         {
                             m_device.setListener_State((DeviceStateListener) null);
+                            m_stateFlowable = null;
                         }
                     });
                 }
-            }, BackpressureStrategy.BUFFER).publish();
+            }, BackpressureStrategy.BUFFER).share();
         }
 
-        return m_stateFlowable.refCount();
+        return m_stateFlowable.share();
     }
 
-    public final Flowable<NotificationListener.NotificationEvent> observeNotifyEvents()
+    public final @HotObservable Flowable<NotificationListener.NotificationEvent> observeNotifyEvents()
     {
         if (m_notifyFlowable == null)
         {
@@ -108,16 +112,17 @@ public class RxBleDevice
                         public void cancel() throws Exception
                         {
                             m_device.setListener_Notification(null);
+                            m_notifyFlowable = null;
                         }
                     });
                 }
-            }, BackpressureStrategy.BUFFER).publish();
+            }, BackpressureStrategy.BUFFER).share();
         }
 
-        return m_notifyFlowable.refCount();
+        return m_notifyFlowable.share();
     }
 
-    public final Flowable<BondListener.BondEvent> observeBondEvents()
+    public final @HotObservable Flowable<BondListener.BondEvent> observeBondEvents()
     {
         if (m_bondFlowable == null)
         {
@@ -145,16 +150,17 @@ public class RxBleDevice
                         public void cancel() throws Exception
                         {
                             m_device.setListener_Bond(null);
+                            m_bondFlowable = null;
                         }
                     });
                 }
-            }, BackpressureStrategy.BUFFER).publish();
+            }, BackpressureStrategy.BUFFER).share();
         }
 
-        return m_bondFlowable.refCount();
+        return m_bondFlowable.share();
     }
 
-    public final Flowable<ReadWriteEvent> observeReadWriteEvents()
+    public final @HotObservable Flowable<ReadWriteEvent> observeReadWriteEvents()
     {
         if (m_readWriteFlowable == null)
         {
@@ -182,13 +188,52 @@ public class RxBleDevice
                         public void cancel() throws Exception
                         {
                             m_device.setListener_ReadWrite((ReadWriteListener) null);
+                            m_readWriteFlowable = null;
                         }
                     });
                 }
-            }, BackpressureStrategy.BUFFER).publish();
+            }, BackpressureStrategy.BUFFER).share();
         }
 
-        return m_readWriteFlowable.refCount();
+        return m_readWriteFlowable.share();
+    }
+
+    public final @HotObservable Flowable<BleNode.HistoricalDataLoadListener.HistoricalDataLoadEvent> observeHistoricalDataLoadEvents()
+    {
+        if (m_historicalDataLoadFlowable == null)
+        {
+            m_historicalDataLoadFlowable = Flowable.create(new FlowableOnSubscribe<BleNode.HistoricalDataLoadListener.HistoricalDataLoadEvent>()
+            {
+                @Override
+                public void subscribe(final FlowableEmitter<BleNode.HistoricalDataLoadListener.HistoricalDataLoadEvent> emitter) throws Exception
+                {
+                    if (emitter.isCancelled()) return;
+
+                    m_device.setListener_HistoricalDataLoad(new BleNode.HistoricalDataLoadListener()
+                    {
+                        @Override
+                        public void onEvent(HistoricalDataLoadEvent e)
+                        {
+                            if (emitter.isCancelled()) return;
+
+                            emitter.onNext(e);
+                        }
+                    });
+
+                    emitter.setCancellable(new Cancellable()
+                    {
+                        @Override
+                        public void cancel() throws Exception
+                        {
+                            m_device.setListener_HistoricalDataLoad(null);
+                            m_historicalDataLoadFlowable = null;
+                        }
+                    });
+                }
+            }, BackpressureStrategy.BUFFER).share();
+        }
+
+        return m_historicalDataLoadFlowable.share();
     }
 
     public final BleDevice getBleDevice()
@@ -245,7 +290,7 @@ public class RxBleDevice
      * {@link SingleEmitter#onError(Throwable)} will be called which holds an instance of {@link BondException}, which also holds an instance
      * of {@link BondListener.BondEvent}, so you can get more information on what went wrong.
      */
-    public Single<BleDevice.BondListener.BondEvent> bond()
+    public Single<RxBondEvent> bond()
     {
         return Single.create(new SingleOnSubscribe<BondListener.BondEvent>()
         {
@@ -268,6 +313,13 @@ public class RxBleDevice
                     }
                 });
             }
+        }).map(new Function<BondListener.BondEvent, RxBondEvent>()
+        {
+            @Override
+            public RxBondEvent apply(BondListener.BondEvent bondEvent) throws Exception
+            {
+                return new RxBondEvent(bondEvent);
+            }
         });
     }
 
@@ -286,7 +338,7 @@ public class RxBleDevice
      * {@link SingleEmitter#onError(Throwable)} will be called which holds an instance of {@link ReadWriteException}, which also holds an instance
      * of {@link ReadWriteEvent}, so you can get more information on what went wrong.
      */
-    public Single<BleDevice.ReadWriteListener.ReadWriteEvent> read(final BleRead read)
+    public Single<RxReadWriteEvent> read(final BleRead read)
     {
         return Single.create(new SingleOnSubscribe<ReadWriteEvent>()
         {
@@ -309,6 +361,13 @@ public class RxBleDevice
                     }
                 });
             }
+        }).map(new Function<ReadWriteEvent, RxReadWriteEvent>()
+        {
+            @Override
+            public RxReadWriteEvent apply(ReadWriteEvent event) throws Exception
+            {
+                return new RxReadWriteEvent(event);
+            }
         });
     }
 
@@ -319,7 +378,7 @@ public class RxBleDevice
      * {@link SingleEmitter#onError(Throwable)} will be called which holds an instance of {@link ReadWriteException}, which also holds an instance
      * of {@link ReadWriteEvent}, so you can get more information on what went wrong.
      */
-    public Single<ReadWriteListener.ReadWriteEvent> write(final BleWrite write)
+    public Single<RxReadWriteEvent> write(final BleWrite write)
     {
         return Single.create(new SingleOnSubscribe<ReadWriteEvent>()
         {
@@ -342,6 +401,13 @@ public class RxBleDevice
                     }
                 });
             }
+        }).map(new Function<ReadWriteEvent, RxReadWriteEvent>()
+        {
+            @Override
+            public RxReadWriteEvent apply(ReadWriteEvent event) throws Exception
+            {
+                return new RxReadWriteEvent(event);
+            }
         });
     }
 
@@ -352,7 +418,7 @@ public class RxBleDevice
      * {@link SingleEmitter#onError(Throwable)} will be called which holds an instance of {@link ReadWriteException}, which also holds an instance
      * of {@link ReadWriteEvent}, so you can get more information on what went wrong.
      */
-    public Single<ReadWriteEvent> enableNotify(final BleNotify notify)
+    public Single<RxReadWriteEvent> enableNotify(final BleNotify notify)
     {
         return Single.create(new SingleOnSubscribe<ReadWriteEvent>()
         {
@@ -375,6 +441,13 @@ public class RxBleDevice
                     }
                 });
             }
+        }).map(new Function<ReadWriteEvent, RxReadWriteEvent>()
+        {
+            @Override
+            public RxReadWriteEvent apply(ReadWriteEvent event) throws Exception
+            {
+                return new RxReadWriteEvent(event);
+            }
         });
     }
 
@@ -385,7 +458,7 @@ public class RxBleDevice
      * {@link SingleEmitter#onError(Throwable)} will be called which holds an instance of {@link ReadWriteException}, which also holds an instance
      * of {@link ReadWriteEvent}, so you can get more information on what went wrong.
      */
-    public Single<ReadWriteEvent> disableNotify(final BleNotify notify)
+    public Single<RxReadWriteEvent> disableNotify(final BleNotify notify)
     {
         return Single.create(new SingleOnSubscribe<ReadWriteEvent>()
         {
@@ -407,6 +480,13 @@ public class RxBleDevice
                             emitter.onError(new ReadWriteException(e));
                     }
                 });
+            }
+        }).map(new Function<ReadWriteEvent, RxReadWriteEvent>()
+        {
+            @Override
+            public RxReadWriteEvent apply(ReadWriteEvent event) throws Exception
+            {
+                return new RxReadWriteEvent(event);
             }
         });
     }
