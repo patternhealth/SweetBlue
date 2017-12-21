@@ -329,6 +329,12 @@ public class BleManagerConfig extends BleDeviceConfig
 	public Interval autoScanPauseTimeWhileAppIsBackgrounded = Interval.DISABLED;
 
 	/**
+	 * Default is {@link ScanOptions.Priority#TRIVIAL} - Priority that auto scan tasks run at.
+	 */
+	@Nullable(Prevalence.NORMAL)
+	public ScanOptions.Priority autoScanPriority 			= ScanOptions.Priority.TRIVIAL;
+
+	/**
 	 * Default is {@link #DEFAULT_MINIMUM_SCAN_TIME} seconds - Minimum amount of time in seconds that the library strives to give to a scanning operation.
 	 */
 	@com.idevicesinc.sweetblue.annotations.Advanced

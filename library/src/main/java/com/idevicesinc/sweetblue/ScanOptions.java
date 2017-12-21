@@ -3,20 +3,38 @@ package com.idevicesinc.sweetblue;
 
 import com.idevicesinc.sweetblue.annotations.Advanced;
 import com.idevicesinc.sweetblue.utils.Interval;
+import com.idevicesinc.sweetblue.utils.P_Const;
 
 /**
  * Class used to feed options for scanning via {@link BleManager#startScan(ScanOptions)}.
  */
 public final class ScanOptions
 {
+    public enum Priority {
+        CRITICAL (PE_TaskPriority.CRITICAL),
+        HIGH (PE_TaskPriority.HIGH),
+        MEDIUM (PE_TaskPriority.MEDIUM),
+        LOW (PE_TaskPriority.LOW),
+        TRIVIAL (PE_TaskPriority.TRIVIAL);
+
+        private final PE_TaskPriority taskPriority;
+
+        Priority(PE_TaskPriority taskPriority) {
+            this.taskPriority = taskPriority;
+        }
+
+        PE_TaskPriority getTaskPriority() {
+            return taskPriority;
+        }
+    }
 
     Interval m_scanTime;
     Interval m_pauseTime;
     BleManagerConfig.ScanFilter m_scanFilter;
     BleManager.DiscoveryListener m_discoveryListener;
     boolean m_isPeriodic;
-    boolean m_isPriorityScan;
     boolean m_forceIndefinite;
+    Priority m_priority = Priority.TRIVIAL;
 
 
     public ScanOptions()
@@ -105,6 +123,14 @@ public final class ScanOptions
     }
 
     /**
+     * Set a {@link Priority} for this scan.
+     */
+    public final ScanOptions withPriority(Priority priority) {
+        this.m_priority = priority;
+        return this;
+    }
+
+    /**
      * This will set the scan to be of the highest priority. This should ONLY be used if you absolutely
      * need it! With this active, ONLY scanning will happen (even if you call connect on a device, or
      * read/write, etc), until you call {@link BleManager#stopScan()} or {@link BleManager#stopPeriodicScan()}, or {@link BleManager#stopAllScanning()}.
@@ -112,7 +138,9 @@ public final class ScanOptions
     @Advanced
     public final ScanOptions asHighPriority(boolean highPriority)
     {
-        m_isPriorityScan = highPriority;
+        if (highPriority) {
+            m_priority = Priority.CRITICAL;
+        }
         return this;
     }
 

@@ -1713,9 +1713,8 @@ public final class BleManager
 			{
 				m_config.autoScanActiveTime = options.m_scanTime;
 				m_config.autoScanPauseInterval = options.m_pauseTime;
+				m_config.autoScanPriority = options.m_priority;
 			}
-
-            PE_TaskPriority pri = options.m_isPriorityScan ? PE_TaskPriority.CRITICAL : null;
 
 			boolean startScan = true;
 
@@ -1729,7 +1728,7 @@ public final class BleManager
 
 			if (startScan)
 			{
-				m_taskQueue.add(new P_Task_Scan(this, m_listeners.getScanTaskListener(), options.m_scanTime.secs(), options.m_isPeriodic, pri));
+				m_taskQueue.add(new P_Task_Scan(this, m_listeners.getScanTaskListener(), options.m_scanTime.secs(), options.m_isPeriodic, options.m_priority.getTaskPriority()));
 			}
 		}
 
